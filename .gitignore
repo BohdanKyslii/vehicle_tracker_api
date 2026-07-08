@@ -1,0 +1,15 @@
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+.env
+*.pyc
+__pycache__/
+venv/
