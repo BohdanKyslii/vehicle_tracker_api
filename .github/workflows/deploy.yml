@@ -7,15 +7,29 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Deploy to Pi
-        uses: appleboy/ssh-action@v1
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PI_HOST }}
           username: ${{ secrets.PI_USER }}
           key: ${{ secrets.PI_SSH_KEY }}
           script: |
+            set -e
             cd ~/vehicle_tracker_api
+
+            echo "==> Pulling latest code..."
             git pull origin main
+
+            echo "==> Cleaning up old images before build..."
+            docker image prune -f
+
+            echo "==> Rebuilding and restarting containers..."
             docker compose build
             docker compose up -d
+
+            echo "==> Cleaning up dangling images..."
+            docker image prune -f
+
+            echo "==> Deploy complete!"

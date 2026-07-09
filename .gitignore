@@ -1,15 +1,25 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+media/
+staticfiles/
+
+# Environment
+.env
+
 # IDE
 .idea/
-.vscode/
+*.swp
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Docker
-.dockerignore
-
-.env
-*.pyc
-__pycache__/
-venv/
+# AI Agent Contexts
+junie_context/
+task_description/

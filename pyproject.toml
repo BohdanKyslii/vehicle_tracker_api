@@ -1,0 +1,16 @@
+[project]
+name = "vehicle-tracker-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 90
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+# RUF001-003 навмисно не вмикаємо: вони помічають кириличні символи
+# в коментарях/докстрінгах/рядках як "ambiguous unicode character",
+# а коментарі в проєкті пишемо українською.
+ignore = []
+
+[tool.ruff.format]
