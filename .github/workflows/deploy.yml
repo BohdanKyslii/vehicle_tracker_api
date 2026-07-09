@@ -11,16 +11,18 @@ jobs:
     steps:
       - name: Decode deploy key
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.PI_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.PI_SSH_KEY_B64 }}" | base64 -d > "$RUNNER_TEMP/deploy_key"
+          chmod 600 "$RUNNER_TEMP/deploy_key"
 
+      # appleboy/ssh-action runs as a Docker container action; the runner
+      # only mounts $RUNNER_TEMP into it at /github/runner_temp, so key_path
+      # must reference that container-side path, not the host path.
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PI_HOST }}
           username: ${{ secrets.PI_USER }}
-          key_path: ~/.ssh/deploy_key
+          key_path: /github/runner_temp/deploy_key
           script: |
             set -e
             cd ~/vehicle_tracker_api
