@@ -12,7 +12,9 @@ jobs:
       - name: Decode deploy key
         run: |
           echo "${{ secrets.PI_SSH_KEY_B64 }}" | base64 -d > "$RUNNER_TEMP/deploy_key"
-          chmod 600 "$RUNNER_TEMP/deploy_key"
+          # 644, not 600: the ssh-action container reads this as a different
+          # UID than the one that wrote it; the runner VM is ephemeral anyway.
+          chmod 644 "$RUNNER_TEMP/deploy_key"
 
       # appleboy/ssh-action runs as a Docker container action; the runner
       # only mounts $RUNNER_TEMP into it at /github/runner_temp, so key_path
