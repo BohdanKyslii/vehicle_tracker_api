@@ -36,6 +36,21 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
+      - name: Debug key
+        run: |
+          echo "=== Довжина ключа ==="
+          wc -c ~/.ssh/deploy_key
+          echo "=== Перший рядок ==="
+          head -1 ~/.ssh/deploy_key
+          echo "=== Останній рядок ==="
+          tail -1 ~/.ssh/deploy_key
+          echo "=== Кількість рядків ==="
+          wc -l ~/.ssh/deploy_key
+          echo "=== Fingerprint ==="
+          ssh-keygen -l -f ~/.ssh/deploy_key 2>&1
+          echo "=== Публічний ключ з приватного ==="
+          ssh-keygen -y -f ~/.ssh/deploy_key 2>&1
+
       - name: Test SSH connection
         run: |
           echo "=== Key fingerprint ==="
