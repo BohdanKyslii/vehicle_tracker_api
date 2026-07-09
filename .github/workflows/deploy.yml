@@ -9,12 +9,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Decode deploy key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PI_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PI_HOST }}
           username: ${{ secrets.PI_USER }}
-          key: ${{ secrets.PI_SSH_KEY }}
+          key_path: ~/.ssh/deploy_key
           script: |
             set -e
             cd ~/vehicle_tracker_api
