@@ -23,3 +23,6 @@ staticfiles/
 # AI Agent Contexts
 junie_context/
 task_description/
+
+# work instruction
+DJANGO_CODING_GUIDE.md

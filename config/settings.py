@@ -49,14 +49,13 @@ INSTALLED_APPS = [
     # Third-party libraries
     "rest_framework",  # Django REST Framework
     "corsheaders",  # CORS for React
-    # Our apps (uncomment as needed)
-    # "apps.cars",
-    # "apps.drivers",
-    # "apps.products",
-    # "apps.waybills",
-    # "apps.routes",
-    # "apps.logistics",
-    # "apps.analytics",
+    # Our apps
+    "apps.cars",
+    "apps.products",
+    "apps.customers",
+    "apps.waybills",
+    "apps.logistics",
+    "apps.analytics",
 ]
 
 MIDDLEWARE = [
