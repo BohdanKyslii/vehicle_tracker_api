@@ -1,6 +1,6 @@
-# Task Description — Expenses Project
+# Task Description — Vehicle Cost Tracker (v3)
 
-Каталог з документацією та завданнями для розробки проекту **Expenses**.
+Каталог з документацією та завданнями для розробки проекту **Vehicle Cost Tracker** (система обліку транспортних витрат).
 
 ---
 
@@ -9,14 +9,16 @@
 ```
 task_description/
 ├── AGENTS_GLOBAL.md      # ⭐ ГЛОБАЛЬНІ ПРАВИЛА (читати першим!)
-├── AI_AGENT_CONTEXT.md   # Технічний контекст (моделі, URL, бізнес-логіка)
-├── CLAUDE.md             # Швидкий довідник для Claude Code
+├── AI_AGENT_CONTEXT.md   # Технічний контекст (типи, структура, Mock API)
+├── CLAUDE.md             # Швидкий довідник для Claude Code / AI Агентів
 ├── TASK.md               # ← СЮДИ ПИШЕМО ПОТОЧНЕ ЗАВДАННЯ
 ├── CHANGES.md            # Журнал змін документації
 ├── README.md             # Цей файл
-└── images/               # Скриншоти та мокапи до завдань
-    └── image1.png
-    └── image2.png
+├── STATE.md              # 🔄 Стан проекту та останні зміни (для контексту)
+└── transport/            # Детальна специфікація v3 (React PWA)
+    ├── 01_PROJECT_OVERVIEW.md
+    ├── 06_IMPLEMENTATION_PLAN.md
+    └── 08_PROJECT_STRUCTURE.md
 ```
 
 ---
@@ -24,11 +26,11 @@ task_description/
 ## Порядок читання
 
 ```
-1. AGENTS_GLOBAL.md     — архітектура, патерни, стиль коду
-2. TASK.md              — конкретне завдання
-3. AI_AGENT_CONTEXT.md  — технічні деталі моделей та URL
-4. CLAUDE.md            — швидкий довідник
-5. images/              — скриншоти (якщо є)
+1. transport/01_PROJECT_OVERVIEW.md — бізнес-логіка та ролі
+2. AGENTS_GLOBAL.md                — архітектура, патерни, стек
+3. STATE.md                        — що вже зроблено, поточний статус
+4. TASK.md                         — конкретне завдання
+5. AI_AGENT_CONTEXT.md             — технічні деталі (типи, структура)
 ```
 
 ---
@@ -39,45 +41,33 @@ task_description/
 
 1. Очисти старий зміст `TASK.md`
 2. Заповни за шаблоном (є в самому файлі)
-3. Додай скриншоти в `images/` якщо потрібно
-
-### Для Claude Code
-
-Передай контекст у промпті:
-```
-Прочитай task_description/AGENTS_GLOBAL.md, task_description/TASK.md
-та task_description/AI_AGENT_CONTEXT.md і виконай завдання.
-```
-
-Або через CLAUDE.md (автоматично завантажується як системний контекст).
+3. Додай посилання на відповідні розділи в `transport/` якщо потрібно
 
 ---
 
-## Проект Expenses — коротко
+## Проект Vehicle Cost Tracker — коротко
 
-**Django 6.0 + PostgreSQL + Bootstrap 5**
+**React 18 + TypeScript + Vite + Tailwind CSS + TanStack Query**
 
-| App       | Що робить                                      |
-|-----------|------------------------------------------------|
-| transport | Облік витрат автопарку, пробіг, логістика      |
-| warehouse | Облік витрат складу (фіксовані/змінні)         |
-| shipment  | Накладні, продукти, магазини, маршрути         |
-| accounts  | Аутентифікація, профіль                        |
-| common    | Спільні template tags, home selector           |
+| Компонент | Технологія / Призначення |
+|-----------|--------------------------|
+| **Driver UI** | PWA для водіїв (одометр, паливо, QR накладних) |
+| **Logistics** | Десктоп інтерфейс для логістів (найманий транспорт) |
+| **Analytics** | Дашборди та порівняння каналів доставки |
+| **Data** | Mock JSON (MVP) → в майбутньому Django DRF |
 
 **Ключові правила:**
-- CBV для всіх CRUD операцій
-- `DecimalField` для фінансових даних
-- `on_delete=PROTECT` за замовчуванням
-- Ruff: 90 символів, подвійні лапки
-- `.env` ніколи не комітити
+- Функціональні компоненти (FC) з TypeScript.
+- TanStack Query для роботи з даними (навіть mock).
+- Ексклюзивність каналів (власне авто / найманий / служба).
+- Палети: облік у режимах `daily` та `full`.
+- Мобільна адаптація (Safe Area, 44px touch targets).
 
 ---
 
 ## Типові завдання
 
-- **Новий CRUD модуль** → создати model → form → view (CBV) → urls → templates
-- **Новий звіт/аналітика** → FBV або TemplateView → агрегація через ORM → шаблон
-- **Імпорт даних** → сервіс у `services.py` → форма завантаження → валідація
-- **AJAX ендпоінт** → FBV → `JsonResponse` → JS у шаблоні
-- **Нове поле моделі** → `makemigrations` → `migrate` → оновити форму та шаблон
+- **Нова сторінка/форма** → компонент у `pages/` → Route у `App.tsx` → Hook у `hooks/`.
+- **Новий аналітичний звіт** → утиліта у `utils/calc...` → графік Recharts.
+- **Зміна логіки розрахунків** → оновити `utils/` → додати/оновити Mock дані.
+- **Новий UI компонент** → `components/ui/` з Tailwind стилями.
