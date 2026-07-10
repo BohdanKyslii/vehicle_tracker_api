@@ -1507,6 +1507,246 @@ python manage.py dbshell
 ---
 
 # ═══════════════════════════════════════════════════════════
+# ФАЗА 4.5 — АВТОРИЗАЦІЯ КОРИСТУВАЧІВ
+# ═══════════════════════════════════════════════════════════
+
+> Ця фаза йде поза початковою нумерацією (див. `task_description/ROADMAP.md`).
+> Причина: фронтенд (`CODING_GUIDE.md`, Фаза 4.5) не може продовжувати
+> без робочого логіну/реєстрації, тож ця частина API робиться зараз,
+> а Admin/Серіалізатори/Views для `cars`/`products`/... — одразу після.
+> Працюй у гілці `feature/faza-4.5-auth` (див. ROADMAP.md).
+
+## Крок 4.5.1 — Чому Django session + CSRF cookie, а не токен/JWT
+
+React SPA і Django живуть на **одному домені** (nginx віддає `dist/`
+і проксує `/api/` на той самий Django на тому ж сервері — так само,
+як заплановано для `warehouse`, див. `task_description/warehouse/08_PROJECT_STRUCTURE.md`).
+На одному домені токен/JWT — зайва складність: браузер сам зберігає
+і надсилає cookie, не треба вручну класти токен у `localStorage` і
+думати про його оновлення.
+
+```
+POST /api/auth/login/   → Django ставить sessionid cookie
+Наступні запити         → браузер сам додає cookie
+POST/PUT/DELETE запити  → потрібен додатково X-CSRFToken header
+                           (Django CSRF-захист працює навіть для
+                           сесійної автентифікації)
+```
+
+## Крок 4.5.2 — Фікс CORS middleware
+
+`corsheaders` вже є в `INSTALLED_APPS`, але його **не додали в
+MIDDLEWARE** — тобто CORS зараз фактично не працює. Відкрий
+`config/settings.py`:
+
+```python
+MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",  # ДОДАТИ, і саме першим
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+```
+
+Додай туди ж, після `CORS_ALLOWED_ORIGINS`:
+
+```python
+# Дозволяємо React надсилати cookie разом із запитом
+# (без цього браузер отримає sessionid, але не відправить його назад)
+CORS_ALLOW_CREDENTIALS = True
+
+# Django довіряє CSRF-токену тільки з цих origin
+CSRF_TRUSTED_ORIGINS = os.getenv(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:5173,https://warehouse.mom",
+).split(",")
+```
+
+Онови `.env` і `env.example` — додай рядок `CSRF_TRUSTED_ORIGINS=` за
+тим самим принципом, що й `CORS_ALLOWED_ORIGINS`.
+
+## Крок 4.5.3 — Створення apps/accounts
+
+```bash
+python manage.py startapp accounts apps/accounts
+```
+
+`apps/accounts/apps.py`:
+
+```python
+from django.apps import AppConfig
+
+
+class AccountsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.accounts"
+    verbose_name = "Користувачі"
+```
+
+Додай `"apps.accounts"` у `INSTALLED_APPS` (`config/settings.py`).
+
+Своя модель `User` тут не потрібна — MVP використовує вбудований
+`django.contrib.auth.models.User` (username, email, password вже є).
+Якщо пізніше знадобляться додаткові поля (роль, телефон) —
+розширюється через `OneToOneField(User)` окремою моделлю `Profile`,
+без міграції самого `User`.
+
+## Крок 4.5.4 — Серіалізатори
+
+`apps/accounts/serializers.py`:
+
+```python
+from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from rest_framework import serializers
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    # write_only — це поле приймається на вхід, але ніколи не повертається у відповіді
+    password = serializers.CharField(write_only=True, validators=[validate_password])
+
+    class Meta:
+        model = User
+        fields = ["username", "email", "password"]
+
+    def create(self, validated_data):
+        # create_user — хешує пароль (звичайний create() зберіг би його як є)
+        return User.objects.create_user(**validated_data)
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "username", "email"]
+```
+
+## Крок 4.5.5 — Views
+
+`apps/accounts/views.py`:
+
+```python
+from django.contrib.auth import authenticate, login, logout
+from django.middleware.csrf import get_token
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+
+from .serializers import RegisterSerializer, UserSerializer
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def csrf(request):
+    """
+    GET /api/auth/csrf/ — фронтенд викликає це ПЕРШИМ, ще до форми логіну,
+    щоб браузер отримав csrftoken cookie (інакше перший POST впаде з 403).
+    """
+    return Response({"csrfToken": get_token(request)})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def register(request):
+    """POST /api/auth/register/ — {username, email, password}"""
+    serializer = RegisterSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    user = serializer.save()
+    login(request, user)  # одразу логінимо після реєстрації
+    return Response(UserSerializer(user).data, status=201)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def login_view(request):
+    """POST /api/auth/login/ — {username, password}"""
+    username = request.data.get("username")
+    password = request.data.get("password")
+    user = authenticate(request, username=username, password=password)
+    if user is None:
+        return Response({"error": "Невірний логін або пароль"}, status=400)
+    login(request, user)
+    return Response(UserSerializer(user).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def logout_view(request):
+    """POST /api/auth/logout/"""
+    logout(request)
+    return Response(status=204)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def me(request):
+    """
+    GET /api/auth/me/ — поточний користувач.
+    Фронтенд викликає це при завантаженні застосунку, щоб дізнатись,
+    чи є активна сесія (замість того, щоб зберігати щось у localStorage).
+    """
+    if not request.user.is_authenticated:
+        return Response({"user": None})
+    return Response({"user": UserSerializer(request.user).data})
+```
+
+## Крок 4.5.6 — URLs
+
+`apps/accounts/urls.py`:
+
+```python
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path("auth/csrf/", views.csrf),
+    path("auth/register/", views.register),
+    path("auth/login/", views.login_view),
+    path("auth/logout/", views.logout_view),
+    path("auth/me/", views.me),
+]
+```
+
+`config/urls.py` — додай:
+
+```python
+from django.contrib import admin
+from django.urls import path, include
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("api/", include("apps.accounts.urls")),
+]
+```
+
+## Крок 4.5.7 — Перевірка
+
+```bash
+python manage.py migrate   # auth-таблиці вже є, але переконайся
+python manage.py runserver
+```
+
+PowerShell (сесія зберігається між запитами через `-SessionVariable`):
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/auth/csrf/" -SessionVariable s
+Invoke-RestMethod -Uri "http://localhost:8000/api/auth/register/" -Method POST `
+  -WebSession $s `
+  -Body (@{username="test"; email="test@test.com"; password="Str0ngPass!23"} | ConvertTo-Json) `
+  -ContentType "application/json"
+Invoke-RestMethod -Uri "http://localhost:8000/api/auth/me/" -WebSession $s
+```
+
+Якщо `me` повертає `{"user": {"id": 1, "username": "test", ...}}` —
+сесія працює. Далі переходь у `vehicle_cost_tracker`, `CODING_GUIDE.md`,
+Фаза 4.5.
+
+---
+
+# ═══════════════════════════════════════════════════════════
 # ФАЗА 5 — DJANGO ADMIN
 # ═══════════════════════════════════════════════════════════
 
