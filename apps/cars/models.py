@@ -24,7 +24,7 @@ class Car(models.Model):
         verbose_name="Назва авто",
     )
     number_car = models.CharField(
-        max_length=20,
+        max_length=17,
         unique=True,
         verbose_name="Держ. номер",
     )
