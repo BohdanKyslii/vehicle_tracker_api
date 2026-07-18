@@ -26,3 +26,4 @@ task_description/
 
 # work instruction
 DJANGO_CODING_GUIDE.md
+.env.production
