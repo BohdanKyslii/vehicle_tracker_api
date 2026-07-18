@@ -157,6 +157,21 @@ CSRF_TRUSTED_ORIGINS = os.getenv(
     "http://localhost:5173,https://warehouse.mom"
 ).split(",")
 
+# Email (сповіщення адміну про нову заявку на реєстрацію)
+# За замовчуванням — console backend: лист друкується в термінал Django,
+# нічого реально не надсилається, поки не задати EMAIL_HOST_USER/PASSWORD у .env
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+# Куди надсилати сповіщення про нові заявки на реєстрацію
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
+
 # DJANGO REST FRAMEWORK
 REST_FRAMEWORK = {
     # Формат відповіді за замовчуванням — JSON
