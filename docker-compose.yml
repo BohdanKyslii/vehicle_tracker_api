@@ -9,3 +9,12 @@ services:
     command: >
       sh -c "python manage.py migrate &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000"
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    network_mode: host  # той самий доступ до Postgres; вихідні long-polling з'єднання, вхідний порт не потрібен
+    depends_on:
+      - api
+    command: python manage.py run_bot

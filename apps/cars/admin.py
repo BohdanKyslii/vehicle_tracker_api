@@ -29,7 +29,7 @@ class CarAdmin(admin.ModelAdmin):
 
 @admin.register(Driver)
 class DriverAdmin(admin.ModelAdmin):
-    list_display = ["name_driver", "car", "phone", "telegram_id", "is_active"]
+    list_display = ["name_driver", "car", "phone", "is_active"]
     list_filter = ["is_active"]
     search_fields = ["name_driver", "phone"]
 

@@ -153,8 +153,7 @@ CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173"
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = os.getenv(
-    "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:5173,https://warehouse.mom"
+    "CSRF_TRUSTED_ORIGINS", "http://localhost:5173,https://warehouse.mom"
 ).split(",")
 
 # Email (сповіщення адміну про нову заявку на реєстрацію)
@@ -171,6 +170,9 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
 # Куди надсилати сповіщення про нові заявки на реєстрацію
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
+
+# Telegram bot (реєстрація водіїв) — long polling, apps.accounts.bot
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
 # DJANGO REST FRAMEWORK
 REST_FRAMEWORK = {

@@ -57,7 +57,6 @@ class DriverSerializer(serializers.ModelSerializer):
             "id",
             "name_driver",
             "phone",
-            "telegram_id",
             "car",
             "car_number",
             "car_name",

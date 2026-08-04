@@ -129,32 +129,43 @@ class CarSpecs(models.Model):
         verbose_name="VIN код",
     )
     year_manufactured = models.SmallIntegerField(
-        null=True, blank=True,
+        null=True,
+        blank=True,
         verbose_name="Рік випуску",
     )
     weight_kg = models.DecimalField(
-        max_digits=10, decimal_places=2,
-        null=True, blank=True,
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Маса авто (кг)",
     )
     payload_kg = models.DecimalField(
-        max_digits=10, decimal_places=2,
-        null=True, blank=True,
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Вантажопідйомність (кг)",
     )
     length_cm = models.DecimalField(
-        max_digits=8, decimal_places=2,
-        null=True, blank=True,
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Довжина (см)",
     )
     width_cm = models.DecimalField(
-        max_digits=8, decimal_places=2,
-        null=True, blank=True,
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Ширина (см)",
     )
     height_cm = models.DecimalField(
-        max_digits=8, decimal_places=2,
-        null=True, blank=True,
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Висота (см)",
     )
     # Гідроборт — за замовчуванням немає
@@ -211,7 +222,8 @@ class Trailer(models.Model):
         verbose_name="Номерний знак",
     )
     year_manufactured = models.SmallIntegerField(
-        null=True, blank=True,
+        null=True,
+        blank=True,
         verbose_name="Рік випуску",
     )
     is_active = models.BooleanField(default=True, verbose_name="Активний")
@@ -228,7 +240,7 @@ class Trailer(models.Model):
 class Driver(models.Model):
     """
     Driver assigned to a vehicle.
-    telegram_id is optional — for future bot notifications.
+    Telegram-лінк живе на apps.accounts.Profile.telegram_id (auth), не тут.
     """
 
     name_driver = models.CharField(
@@ -246,12 +258,6 @@ class Driver(models.Model):
         blank=True,
         default="",
         verbose_name="Посвідчення водія",
-    )
-    # Telegram ID для майбутнього бота (розсилки, звіти)
-    telegram_id = models.BigIntegerField(
-        null=True,
-        blank=True,
-        verbose_name="Telegram ID",
     )
     car = models.OneToOneField(
         Car,
@@ -320,77 +326,101 @@ class RouteEvent(models.Model):
         verbose_name="Час події",
     )
     odometer_km = models.IntegerField(
-        null=True, blank=True,
+        null=True,
+        blank=True,
         verbose_name="Одометр (км)",
     )
     pallets_count = models.SmallIntegerField(
-        null=True, blank=True,
+        null=True,
+        blank=True,
         verbose_name="Кількість палет",
     )
 
     # Для delivery
     waybill_number = models.CharField(
-        max_length=50, blank=True, default="",
+        max_length=50,
+        blank=True,
+        default="",
         verbose_name="Номер накладної",
     )
     waybill_date = models.DateField(
-        null=True, blank=True,
+        null=True,
+        blank=True,
         verbose_name="Дата накладної",
     )
     customer_name = models.CharField(
-        max_length=255, blank=True, default="",
+        max_length=255,
+        blank=True,
+        default="",
         verbose_name="Клієнт",
     )
 
     # Відмова від поставки (delivery)
     rejection_full = models.BooleanField(
-        null=True, blank=True,
+        null=True,
+        blank=True,
         verbose_name="Повна відмова",
     )
     rejection_product_id = models.CharField(
-        max_length=50, blank=True, default="",
+        max_length=50,
+        blank=True,
+        default="",
         verbose_name="Артикул (відмова)",
     )
     rejection_qty = models.DecimalField(
-        max_digits=10, decimal_places=3,
-        null=True, blank=True,
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
         verbose_name="Кількість (відмова)",
     )
     rejection_comment = models.TextField(blank=True, default="")
 
     # Для refuel
     fuel_liters = models.DecimalField(
-        max_digits=8, decimal_places=2,
-        null=True, blank=True,
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Паливо (л)",
     )
     fuel_cost_uah = models.DecimalField(
-        max_digits=10, decimal_places=2,
-        null=True, blank=True,
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Паливо (грн)",
     )
     ad_blue_liters = models.DecimalField(
-        max_digits=8, decimal_places=2,
-        null=True, blank=True,
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="AdBlue (л)",
     )
     ad_blue_cost_uah = models.DecimalField(
-        max_digits=10, decimal_places=2,
-        null=True, blank=True,
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="AdBlue (грн)",
     )
 
     # Для other_cost
     other_costs_uah = models.DecimalField(
-        max_digits=10, decimal_places=2,
-        null=True, blank=True,
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Інші витрати (грн)",
     )
     other_costs_comment = models.TextField(blank=True, default="")
 
     # Для return_goods
     return_client_waybill = models.CharField(
-        max_length=50, blank=True, default="",
+        max_length=50,
+        blank=True,
+        default="",
         verbose_name="Накладна клієнта (повернення)",
     )
 
@@ -398,8 +428,10 @@ class RouteEvent(models.Model):
     extra_from = models.CharField(max_length=255, blank=True, default="")
     extra_to = models.CharField(max_length=255, blank=True, default="")
     extra_weight_kg = models.DecimalField(
-        max_digits=10, decimal_places=3,
-        null=True, blank=True,
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
     )
     extra_waybill = models.CharField(max_length=50, blank=True, default="")
     extra_comment = models.TextField(blank=True, default="")
@@ -436,29 +468,41 @@ class MonthlyCosts(models.Model):
     # Зберігаємо як перший день місяця: 2026-06-01
     month = models.DateField(verbose_name="Місяць")
     salary_uah = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
+        max_digits=10,
+        decimal_places=2,
+        default=0,
         verbose_name="ЗП водія (грн)",
     )
     taxes_uah = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
+        max_digits=10,
+        decimal_places=2,
+        default=0,
         verbose_name="Податки із ЗП (грн)",
     )
     depreciation_uah = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
+        max_digits=10,
+        decimal_places=2,
+        default=0,
         verbose_name="Амортизація (грн)",
     )
     # Якщо заповнено — пріоритет над розрахунковим
     repair_actual_uah = models.DecimalField(
-        max_digits=10, decimal_places=2,
-        null=True, blank=True,
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
         verbose_name="Ремонт фактичний (грн)",
     )
     repair_rate_uah_km = models.DecimalField(
-        max_digits=6, decimal_places=2, default=2.00,
+        max_digits=6,
+        decimal_places=2,
+        default=2.00,
         verbose_name="Ставка ремонту (грн/км)",
     )
     other_costs_uah = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
+        max_digits=10,
+        decimal_places=2,
+        default=0,
         verbose_name="Інші витрати (грн)",
     )
     other_costs_comment = models.TextField(blank=True, default="")

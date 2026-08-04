@@ -1,0 +1,111 @@
+import logging
+
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.filters import CommandStart
+from aiogram.types import (
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
+from asgiref.sync import sync_to_async
+from django.conf import settings
+from django.contrib.auth.models import User
+
+from apps.accounts.models import Profile
+from apps.accounts.notifications import notify_admin_new_registration
+
+logger = logging.getLogger(__name__)
+
+router = Router(name="accounts")
+
+CONTACT_KEYBOARD = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="Надіслати номер телефону", request_contact=True)]],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message) -> None:
+    await message.answer(
+        "Вітаю! Це бот реєстрації водіїв Vehicle Cost Tracker.\n\n"
+        "Щоб зареєструватись, поділіться, будь ласка, своїм номером телефону "
+        "кнопкою нижче.",
+        reply_markup=CONTACT_KEYBOARD,
+    )
+
+
+@sync_to_async
+def _get_or_create_driver_profile(telegram_id: int, phone: str) -> tuple[Profile, bool]:
+    profile = (
+        Profile.objects.select_related("user").filter(telegram_id=telegram_id).first()
+    )
+    if profile is not None:
+        return profile, False
+
+    user = User.objects.create_user(username=f"tg_{telegram_id}", is_active=False)
+    user.set_unusable_password()
+    user.save(update_fields=["password"])
+    profile = Profile.objects.create(
+        user=user,
+        role=Profile.Role.DRIVER,
+        phone=phone,
+        telegram_id=telegram_id,
+    )
+    return profile, True
+
+
+@router.message(F.contact)
+async def on_contact(message: Message) -> None:
+    contact = message.contact
+    if contact.user_id != message.from_user.id:
+        await message.answer(
+            "Будь ласка, надішліть саме СВІЙ контакт кнопкою нижче, "
+            "а не переслану картку іншої людини.",
+            reply_markup=CONTACT_KEYBOARD,
+        )
+        return
+
+    profile, created = await _get_or_create_driver_profile(
+        telegram_id=contact.user_id,
+        phone=contact.phone_number,
+    )
+
+    if not created:
+        text = (
+            "Ви вже зареєстровані та підтверджені. Відкрийте застосунок кнопкою меню."
+            if profile.user.is_active
+            else "Заявку вже надіслано, очікуйте підтвердження диспетчера."
+        )
+        await message.answer(text, reply_markup=ReplyKeyboardRemove())
+        return
+
+    await sync_to_async(notify_admin_new_registration)(profile.user)
+    await message.answer(
+        "Дякуємо! Заявку надіслано. Очікуйте підтвердження диспетчера — "
+        "ми повідомимо, коли акаунт буде активовано.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+def build_dispatcher() -> Dispatcher:
+    dp = Dispatcher()
+    dp.include_router(router)
+    return dp
+
+
+async def run() -> None:
+    bot = Bot(
+        token=settings.TELEGRAM_BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    dp = build_dispatcher()
+    try:
+        # Long polling вимагає відсутності вебхука — прибираємо старий про всяк випадок.
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
