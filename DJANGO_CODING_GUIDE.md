@@ -2338,12 +2338,391 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/cars/" -Method GET
 ---
 
 # ═══════════════════════════════════════════════════════════
+# ФАЗА 8 — VIEWS ТА URLS ДЛЯ PRODUCTS, CUSTOMERS, WAYBILLS
+# ═══════════════════════════════════════════════════════════
+
+> `products` уже має серіалізатори (Крок 6.2) — тут тільки views/urls.
+> `customers` і `waybills` не мали серіалізаторів взагалі — пишемо все
+> з нуля, за тим самим патерном, що й `cars` у Фазі 6-7.
+
+## Крок 8.1 — Views та URLs для products
+
+Відкрий `apps/products/views.py`:
+
+```python
+# apps/products/views.py
+from rest_framework import filters, viewsets
+
+from .models import Product, ProductCategory
+from .serializers import ProductCategorySerializer, ProductSerializer
+
+
+class ProductCategoryViewSet(viewsets.ModelViewSet):
+    """CRUD для категорій товарів (з ієрархією parent/children)."""
+
+    queryset = ProductCategory.objects.select_related("parent").all()
+    serializer_class = ProductCategorySerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["name_category"]
+    ordering_fields = ["name_category"]
+    ordering = ["name_category"]
+
+    def get_queryset(self):
+        """?root=true — тільки кореневі категорії (без parent)."""
+        qs = super().get_queryset()
+        if self.request.query_params.get("root") == "true":
+            qs = qs.filter(parent__isnull=True)
+        return qs
+
+
+class ProductViewSet(viewsets.ModelViewSet):
+    """CRUD для товарів. Логістика — вкладено (read_only) через ProductSerializer."""
+
+    queryset = Product.objects.select_related("category", "logistics").all()
+    serializer_class = ProductSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["id_product", "name_product"]
+    ordering_fields = ["name_product", "id_product"]
+    ordering = ["name_product"]
+
+    def get_queryset(self):
+        """Фільтрація по категорії і активності."""
+        qs = super().get_queryset()
+        category_id = self.request.query_params.get("category_id")
+        if category_id:
+            qs = qs.filter(category_id=category_id)
+        is_active = self.request.query_params.get("is_active")
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active == "true")
+        return qs
+```
+
+Створи `apps/products/urls.py`:
+
+```python
+# apps/products/urls.py
+from rest_framework.routers import DefaultRouter
+
+from .views import ProductCategoryViewSet, ProductViewSet
+
+router = DefaultRouter()
+router.register(r"product-categories", ProductCategoryViewSet, basename="product-categories")
+router.register(r"products", ProductViewSet, basename="products")
+
+urlpatterns = router.urls
+```
+
+---
+
+## Крок 8.2 — Серіалізатори для customers
+
+Створи файл `apps/customers/serializers.py`:
+
+```python
+# apps/customers/serializers.py
+from rest_framework import serializers
+
+from .models import Customer, Store, StoreDeliveryAddress
+
+
+class StoreDeliveryAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StoreDeliveryAddress
+        fields = ["id", "store", "delivery_address", "is_primary", "notes", "created_at"]
+        read_only_fields = ["created_at"]
+
+
+class StoreSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(
+        source="customer.name_customer",
+        read_only=True,
+    )
+    # related_name="delivery_addresses" на StoreDeliveryAddress.store — DRF сам робить JOIN
+    delivery_addresses = StoreDeliveryAddressSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Store
+        fields = [
+            "id_store", "customer", "customer_name", "name_store",
+            "store_address", "is_active", "delivery_addresses", "updated_at",
+        ]
+
+
+class CustomerSerializer(serializers.ModelSerializer):
+    # SerializerMethodField — скільки магазинів у клієнта (для списку клієнтів)
+    stores_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Customer
+        fields = [
+            "id_customer", "name_customer", "network_customer",
+            "is_active", "stores_count", "created_at", "updated_at",
+        ]
+
+    def get_stores_count(self, obj) -> int:
+        return obj.stores.count()
+```
+
+---
+
+## Крок 8.3 — Views та URLs для customers
+
+Відкрий `apps/customers/views.py`:
+
+```python
+# apps/customers/views.py
+from rest_framework import filters, viewsets
+
+from .models import Customer, Store, StoreDeliveryAddress
+from .serializers import CustomerSerializer, StoreDeliveryAddressSerializer, StoreSerializer
+
+
+class CustomerViewSet(viewsets.ModelViewSet):
+    queryset = Customer.objects.prefetch_related("stores").all()
+    serializer_class = CustomerSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["name_customer", "network_customer"]
+    ordering_fields = ["name_customer"]
+    ordering = ["name_customer"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        is_active = self.request.query_params.get("is_active")
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active == "true")
+        return qs
+
+
+class StoreViewSet(viewsets.ModelViewSet):
+    queryset = Store.objects.select_related("customer").prefetch_related("delivery_addresses").all()
+    serializer_class = StoreSerializer
+    filter_backends = [filters.SearchFilter]
+    search_fields = ["name_store", "store_address"]
+
+    def get_queryset(self):
+        """?customer_id=... — магазини конкретного клієнта."""
+        qs = super().get_queryset()
+        customer_id = self.request.query_params.get("customer_id")
+        if customer_id:
+            qs = qs.filter(customer_id=customer_id)
+        return qs
+
+
+class StoreDeliveryAddressViewSet(viewsets.ModelViewSet):
+    queryset = StoreDeliveryAddress.objects.select_related("store").all()
+    serializer_class = StoreDeliveryAddressSerializer
+
+    def get_queryset(self):
+        """?store_id=... — адреси конкретного магазину."""
+        qs = super().get_queryset()
+        store_id = self.request.query_params.get("store_id")
+        if store_id:
+            qs = qs.filter(store_id=store_id)
+        return qs
+```
+
+Створи `apps/customers/urls.py`:
+
+```python
+# apps/customers/urls.py
+from rest_framework.routers import DefaultRouter
+
+from .views import CustomerViewSet, StoreDeliveryAddressViewSet, StoreViewSet
+
+router = DefaultRouter()
+router.register(r"customers", CustomerViewSet, basename="customers")
+router.register(r"stores", StoreViewSet, basename="stores")
+router.register(
+    r"store-delivery-addresses", StoreDeliveryAddressViewSet, basename="store-delivery-addresses"
+)
+
+urlpatterns = router.urls
+```
+
+---
+
+## Крок 8.4 — Серіалізатори для waybills
+
+Створи файл `apps/waybills/serializers.py`:
+
+```python
+# apps/waybills/serializers.py
+from rest_framework import serializers
+
+from .models import WaybillRecord
+
+
+class WaybillRecordSerializer(serializers.ModelSerializer):
+    # Property з моделі (quantity < 0) — треба задекларувати явно,
+    # ModelSerializer сам бачить тільки поля БД, не @property.
+    is_return = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = WaybillRecord
+        fields = [
+            "id", "legal_entity", "waybill_number", "waybill_date", "line_position",
+            "customer", "customer_name", "store", "product", "product_name",
+            "quantity", "price_uah", "total_uah", "comment",
+            "total_weight_kg", "total_volume_cbm", "volumetric_weight_kg",
+            "delivery_channel", "is_return",
+            "imported_at", "import_batch_id",
+        ]
+        read_only_fields = ["imported_at"]
+```
+
+---
+
+## Крок 8.5 — Views та URLs для waybills
+
+Відкрий `apps/waybills/views.py`:
+
+```python
+# apps/waybills/views.py
+from rest_framework import filters, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from .models import WaybillRecord
+from .serializers import WaybillRecordSerializer
+
+
+class WaybillRecordViewSet(viewsets.ModelViewSet):
+    """
+    CRUD для реєстру накладних (рядки, імпортовані з 1С).
+    Додатковий endpoint: /api/waybill-records/{id}/assign_channel/
+    """
+
+    queryset = WaybillRecord.objects.select_related("customer", "store", "product").all()
+    serializer_class = WaybillRecordSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["waybill_number", "customer_name", "product_name"]
+    ordering_fields = ["waybill_date", "waybill_number", "total_uah"]
+    ordering = ["-waybill_date", "waybill_number"]
+
+    def get_queryset(self):
+        """Фільтри: клієнт, товар, юрособа, канал доставки, діапазон дат."""
+        qs = super().get_queryset()
+        params = self.request.query_params
+
+        customer_id = params.get("customer_id")
+        if customer_id:
+            qs = qs.filter(customer_id=customer_id)
+
+        product_id = params.get("product_id")
+        if product_id:
+            qs = qs.filter(product_id=product_id)
+
+        legal_entity = params.get("legal_entity")
+        if legal_entity:
+            qs = qs.filter(legal_entity=legal_entity)
+
+        delivery_channel = params.get("delivery_channel")
+        if delivery_channel:
+            qs = qs.filter(delivery_channel=delivery_channel)
+
+        date_from = params.get("date_from")
+        if date_from:
+            qs = qs.filter(waybill_date__gte=date_from)
+        date_to = params.get("date_to")
+        if date_to:
+            qs = qs.filter(waybill_date__lte=date_to)
+
+        return qs
+
+    @action(detail=False, methods=["get"])
+    def unassigned(self, request):
+        """GET /api/waybill-records/unassigned/ — рядки без каналу доставки."""
+        qs = self.get_queryset().filter(delivery_channel__isnull=True)
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page if page is not None else qs, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def assign_channel(self, request, pk=None):
+        """
+        POST /api/waybill-records/{id}/assign_channel/ — {"delivery_channel": "own"}
+        Канал можна призначити лише один раз — ексклюзивність каналів
+        це критична бізнес-вимога (див. task_description/STATE.md).
+        """
+        record = self.get_object()
+        channel = request.data.get("delivery_channel")
+
+        if channel not in [c.value for c in WaybillRecord.DeliveryChannel]:
+            return Response({"error": "Невірний канал доставки"}, status=400)
+        if record.delivery_channel:
+            return Response({"error": "Канал доставки вже призначено"}, status=400)
+
+        record.delivery_channel = channel
+        record.save()
+        return Response(WaybillRecordSerializer(record).data)
+```
+
+Створи `apps/waybills/urls.py`:
+
+```python
+# apps/waybills/urls.py
+from rest_framework.routers import DefaultRouter
+
+from .views import WaybillRecordViewSet
+
+router = DefaultRouter()
+router.register(r"waybill-records", WaybillRecordViewSet, basename="waybill-records")
+
+urlpatterns = router.urls
+```
+
+---
+
+## Крок 8.6 — Головний urls.py
+
+Відкрий `config/urls.py` і розкоментуй `products`/`customers`/`waybills`
+(`logistics` лишається закоментованим — моделі для нього ще не написані,
+див. `task_description/STATE.md`):
+
+```python
+# config/urls.py
+from django.contrib import admin
+from django.urls import include, path
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("api/", include("apps.accounts.urls")),
+    path("api/", include("apps.cars.urls")),
+    path("api/", include("apps.products.urls")),
+    path("api/", include("apps.customers.urls")),
+    path("api/", include("apps.waybills.urls")),
+    # path("api/", include("apps.logistics.urls")),  # моделі ще не написані
+]
+```
+
+---
+
+## Крок 8.7 — Перевірка
+
+```bash
+python manage.py check
+python manage.py runserver
+```
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/products/" -Method GET
+Invoke-RestMethod -Uri "http://localhost:8000/api/customers/" -Method GET
+Invoke-RestMethod -Uri "http://localhost:8000/api/waybill-records/" -Method GET
+Invoke-RestMethod -Uri "http://localhost:8000/api/waybill-records/unassigned/" -Method GET
+```
+
+Усі три мають повернути `200` з порожнім `results: []` (БД ще без даних).
+
+---
+
+# ═══════════════════════════════════════════════════════════
 # ЩО ДАЛІ
 # ═══════════════════════════════════════════════════════════
 
 ## Наступні кроки:
 
-### Крок 8 — Views та URLs для products, customers, waybills
 ### Крок 9 — Завантаження реальних даних із 1С (management command)
 ### Крок 10 — Docker + розгортання на Raspberry Pi
 ### Крок 11 — GitHub Actions CI/CD

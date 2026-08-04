@@ -56,7 +56,7 @@ class ProductLogisticsSerializer(serializers.ModelSerializer):
         return obj.box_volume_cbm
 
     def get_calculated_box_weight(self, obj):
-        return obj.box_weight_kg
+        return obj.calculated_box_weight_kg
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -65,6 +65,7 @@ class ProductSerializer(serializers.ModelSerializer):
         source="category.name_category",
         read_only=True,
     )
+    logistics = ProductLogisticsSerializer(read_only=True)
 
     class Meta:
         model = Product
