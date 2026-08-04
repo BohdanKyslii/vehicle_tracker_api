@@ -174,6 +174,14 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
 # Telegram bot (реєстрація водіїв) — long polling, apps.accounts.bot
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
+# Telegram ID адмінів, яким бот надсилає заявки з кнопками Підтвердити/Відхилити.
+# Дізнатись свій ID — написати @userinfobot у Telegram.
+TELEGRAM_ADMIN_IDS = [
+    int(chat_id)
+    for chat_id in os.getenv("TELEGRAM_ADMIN_IDS", "").split(",")
+    if chat_id.strip()
+]
+
 # DJANGO REST FRAMEWORK
 REST_FRAMEWORK = {
     # Формат відповіді за замовчуванням — JSON
