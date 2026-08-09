@@ -2,6 +2,31 @@
 
 ---
 
+## 2026-08-09 — Telegram-бот `@driver_car_bot` піднято в проді
+
+### Що зроблено
+- Створено реального бота через `@BotFather` — `@driver_car_bot`.
+- На Pi в `~/vehicle_tracker_api/.env` додано `TELEGRAM_BOT_TOKEN` і
+  `TELEGRAM_ADMIN_IDS`.
+- Контейнери `api` і `bot` перестворено —
+  `docker compose up -d --force-recreate bot api` (rebuild не
+  знадобився: це backend-змінні через `env_file: .env`, а не
+  `VITE_*`, які запікаються в образ на етапі збірки).
+- Перевірено логи (`docker compose logs bot`) — `Start polling` без
+  traceback, бот `@driver_car_bot id=8661686764` живий.
+- Створено відсутній `task_description/STATE.md` (файл був згаданий у
+  `README.md`/`AGENTS_GLOBAL.md`/кореневому `CLAUDE.md`, але ніколи не
+  існував у репозиторії) з поточним станом проекту.
+
+### Статус
+Бот у проді, приймає `/start`. Наскрізний сценарій (реєстрація →
+сповіщення адміну → підтвердження → прив'язка `Profile.driver`) ще не
+перевірено вручну повністю. Frontend-частина (Mini App, кнопка на
+сайті) — статус push-конфлікту з `origin/main` не перевірявся в цій
+сесії, див. запис 2026-08-04 нижче.
+
+---
+
 ## 2026-08-04 — Фаза 6-7 `cars` задеплоєна, Фаза 8 дописана в гайд, Telegram-бот водіїв
 
 ### Що зроблено
