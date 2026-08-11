@@ -98,8 +98,8 @@ class MonthlyCostsSerializer(serializers.ModelSerializer):
             "depreciation_uah",
             "repair_actual_uah",
             "repair_rate_uah_km",
-            "other_cost_uah",
-            "other_cost_comment",
+            "other_costs_uah",
+            "other_costs_comment",
             "repair_cost_uah",
             "total_cost_uah",
         ]
