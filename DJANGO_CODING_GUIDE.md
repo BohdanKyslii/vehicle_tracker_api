@@ -1068,7 +1068,10 @@ class Trailer(models.Model):
 class Driver(models.Model):
     """
     Driver assigned to a vehicle.
-    telegram_id is optional — for future bot notifications.
+    Telegram-лінк живе на apps.accounts.Profile.telegram_id (авторизація),
+    НЕ тут — Driver це доменна картка "водій+авто", Profile це обліковий
+    запис. Один Profile(role=DRIVER) прив'язується до одного Driver через
+    Profile.driver (див. Фазу 4.5 / TELEGRAM_BOT_SETUP.md).
     """
 
     name_driver = models.CharField(
@@ -1081,11 +1084,11 @@ class Driver(models.Model):
         default="",
         verbose_name="Телефон",
     )
-    # Telegram ID для майбутнього бота (розсилки, звіти)
-    telegram_id = models.BigIntegerField(
-        null=True,
+    drivers_license = models.CharField(
+        max_length=50,
         blank=True,
-        verbose_name="Telegram ID",
+        default="",
+        verbose_name="Посвідчення водія",
     )
     car = models.OneToOneField(
         Car,
@@ -1746,6 +1749,34 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/auth/me/" -WebSession $s
 
 ---
 
+## Крок 4.5.8 — Ролі, Telegram-бот, підтвердження реєстрацій (поза цим гайдом)
+
+`apps/accounts` виріс за межі того, що описано вище: `Profile.role`
+(`driver`/`logist`/`manager`/`head`), `Profile.telegram_id` +
+`Profile.driver` (лінк на картку водія з Фази 3.5), Telegram-бот
+(`apps/accounts/bot.py`, aiogram, `python manage.py run_bot`) для
+самореєстрації водіїв і підтвердження заявок кнопками прямо в чаті,
+`telegram_auth.py` (перевірка `initData` для Mini App логіну),
+`permissions.py` (`HasRole`/`IsManagerOrHead` — маленькі
+permission-класи; **поки не підключені до жодного ViewSet**, дивись
+Фазу 9), `notifications.py`/`telegram_notify.py` (лист/Telegram
+адміну про нову заявку).
+
+Це реальний, задеплоєний функціонал — але він писався поза цим гайдом
+(нема сенсу дублювати тут покроково). Повний опис: **`TELEGRAM_BOT_SETUP.md`**
+у корені цього репо. Ключове, що треба тримати в голові рухаючись далі
+гайдом:
+
+- Реєстрація (веб-форма АБО Telegram-бот) створює `User(is_active=False)`
+  + `Profile` — користувач НЕ може залогинитись, поки адмін не
+  підтвердить (через Django Admin або кнопку в Telegram).
+- Лінк `Profile.driver → Driver` (Фаза 3.5) ставиться ВРУЧНУ адміном
+  через Django Admin — бот цього не автоматизує.
+- `role == 'head'` не можна вибрати при самореєстрації (тільки
+  `driver`/`logist`/`manager`) — головного признача лише вручну.
+
+---
+
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 5 — DJANGO ADMIN
 # ═══════════════════════════════════════════════════════════
@@ -1856,7 +1887,7 @@ class CarAdmin(admin.ModelAdmin):
 
 @admin.register(Driver)
 class DriverAdmin(admin.ModelAdmin):
-    list_display = ["name_driver", "car", "phone", "telegram_id", "is_active"]
+    list_display = ["name_driver", "car", "phone", "drivers_license", "is_active"]
     list_filter = ["is_active"]
     search_fields = ["name_driver", "phone"]
 
@@ -2044,7 +2075,7 @@ class DriverSerializer(serializers.ModelSerializer):
     class Meta:
         model = Driver
         fields = [
-            "id", "name_driver", "phone", "telegram_id",
+            "id", "name_driver", "phone", "drivers_license",
             "car", "car_number", "car_name", "is_active",
         ]
 
@@ -2718,15 +2749,298 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/waybill-records/unassigned/" -
 ---
 
 # ═══════════════════════════════════════════════════════════
+# ФАЗА 9 — РОЛІ ТА ПРАВА ДОСТУПУ ДЛЯ АВТОПАРКУ
+# ═══════════════════════════════════════════════════════════
+
+> Навіщо: `apps/cars` (Car/Driver/RouteEvent/MonthlyCosts) — єдиний
+> застосунок із повним CRUD, вже підключеним до реального фронтенду
+> (`vehicle_cost_tracker`). Але жоден endpoint зараз не перевіряє ні
+> авторизацію, ні роль — `REST_FRAMEWORK` у `settings.py` не має
+> `DEFAULT_PERMISSION_CLASSES`, тому DRF мовчки підставляє `AllowAny`:
+> будь-хто без логіну може створити/видалити авто чи чужу подію
+> маршруту через `POST/DELETE /api/cars/...`. Ця фаза — мінімальний
+> захист перед тим, як логіст отримає UI для додавання авто (Фаза 10)
+> і водій — реальний QR-сканер (`CODING_GUIDE.md`, Фаза 15).
+
+## Крок 9.1 — IsAuthenticated за замовчуванням
+
+Відкрий `config/settings.py`, онови `REST_FRAMEWORK`:
+
+```python
+# config/settings.py
+REST_FRAMEWORK = {
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 10,
+    # Без логіну — 401 замість тихого доступу до всього API.
+    # Аутентифікація (SessionAuthentication) вже стандартна в DRF,
+    # окремо налаштовувати не треба — сесія+CSRF з Фази 4.5 і так працює.
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}
+```
+
+`GET /api/auth/csrf/`, `/api/auth/register/`, `/api/auth/login/` — самі
+залишаються доступними без логіну (`apps/accounts/views.py` явно
+задає їм `permission_classes = [AllowAny]`, перевір і onNeeded додай).
+
+---
+
+## Крок 9.2 — Тільки logist/manager/head можуть змінювати автопарк
+
+`apps/accounts/permissions.py` вже має `IsManagerOrHead` (Крок 4.5.8) —
+але його ніде не підключено. Водій має бачити список авто (свою
+картку), але не створювати/видаляти авто чи інших водіїв. Онови
+`apps/cars/views.py`:
+
+```python
+# apps/cars/views.py
+from apps.accounts.permissions import IsManagerOrHead
+from rest_framework.permissions import IsAuthenticated
+
+WRITE_ACTIONS = ("create", "update", "partial_update", "destroy")
+
+
+class CarViewSet(viewsets.ModelViewSet):
+    ...  # queryset, serializer_class, filter_backends — без змін
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки logist/manager/head."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]
+
+    # status_logs/change_status лишаються — але change_status теж
+    # де-факто "запис", тому явно захисти й цей @action:
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsManagerOrHead])
+    def change_status(self, request, pk=None):
+        ...  # тіло без змін
+
+
+class DriverViewSet(viewsets.ModelViewSet):
+    ...  # queryset, serializer_class, filter_backends — без змін
+
+    def get_permissions(self):
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]
+```
+
+`IsManagerOrHead.allowed_roles = ('manager', 'head')` — зверни увагу,
+`logist` там НЕМАЄ, хоча в задачі йдеться про "логіста". Якщо логіст
+має право додавати авто (а по задачі — має), онови сам permission-клас
+у `apps/accounts/permissions.py`:
+
+```python
+# apps/accounts/permissions.py
+class IsLogistOrAbove(HasRole):
+    allowed_roles = ('logist', 'manager', 'head')
+```
+
+і використай `IsLogistOrAbove` замість `IsManagerOrHead` у
+`get_permissions()` вище (обидва класи можна лишити — `IsManagerOrHead`
+ще знадобиться там, де саме логіст не повинен мати доступу, наприклад
+Крок 18 "Що далі" — підтвердження реєстрацій).
+
+---
+
+## Крок 9.3 — Реальний GET /api/drivers/me/
+
+Зараз `me` повертає першого-ліпшого активного водія в БД незалежно від
+того, хто залогинений — це заглушка з Фази 7, яку треба замінити тепер,
+коли є `Profile.driver`:
+
+```python
+# apps/cars/views.py
+class DriverViewSet(viewsets.ModelViewSet):
+    ...
+
+    @action(detail=False, methods=["get"])
+    def me(self, request):
+        """GET /api/drivers/me/ — водій поточної сесії (Profile.driver)."""
+        profile = getattr(request.user, "profile", None)
+        if not profile or not profile.driver_id:
+            return Response(
+                {"error": "Профіль не прив'язаний до картки водія — зверніться до диспетчера"},
+                status=404,
+            )
+        return Response(DriverSerializer(profile.driver).data)
+```
+
+Лінк `Profile.driver` і досі ставиться вручну в Django Admin (Крок
+4.5.8) — це нормально, це організаційний крок диспетчера/адміна при
+онбордингу нового водія, не те, що можна автоматизувати без ризику
+прив'язати не того користувача не до того авто.
+
+---
+
+## Крок 9.4 — Водій бачить і пише тільки свої події маршруту
+
+`RouteEventViewSet` зараз віддає й приймає ВСІ події без обмежень —
+будь-хто залогинений може прочитати чи змінити чужий маршрут. Виправ:
+
+```python
+# apps/cars/views.py
+class RouteEventViewSet(viewsets.ModelViewSet):
+    ...
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        profile = getattr(self.request.user, "profile", None)
+
+        # Водій бачить лише свої події; logist/manager/head — усі
+        if profile and profile.role == "driver":
+            qs = qs.filter(driver_id=profile.driver_id)
+
+        car_id = self.request.query_params.get("car_id")
+        date = self.request.query_params.get("date")
+        if car_id:
+            qs = qs.filter(car__id=car_id)
+        if date == "today":
+            from django.utils import timezone
+            qs = qs.filter(event_ts__date=timezone.localdate())
+        elif date:
+            qs = qs.filter(event_ts__date=date)
+        return qs
+
+    def perform_create(self, serializer):
+        """Водій не може підписати подію на іншого водія — driver форсується з сесії."""
+        profile = getattr(self.request.user, "profile", None)
+        if profile and profile.role == "driver":
+            serializer.save(driver_id=profile.driver_id, car_id=profile.driver.car_id)
+        else:
+            serializer.save()
+```
+
+Без цього водій, знаючи чужий `driver`/`car` id, міг би через DevTools
+відправити `POST /api/route-events/` з чужими id і підмінити чиюсь
+статистику пробігу/пального — `perform_create` це закриває на бекенді
+(єдине надійне місце, фронтенд-перевірку завжди можна обійти).
+
+---
+
+# ═══════════════════════════════════════════════════════════
+# ФАЗА 10 — CRUD АВТОПАРКУ ДЛЯ ЛОГІСТА
+# ═══════════════════════════════════════════════════════════
+
+> Навіщо: `CarViewSet`/`DriverViewSet` вже повний `ModelViewSet` —
+> API для створення/редагування авто і водіїв технічно вже існує
+> (`POST/PATCH/DELETE /api/cars/`, `/api/drivers/`). Чого бракує — це
+> `specs`/`trailer` (VIN, вага, причіп) записуються лише окремо через
+> Django Admin, бо в `CarSerializer` вони `read_only=True` (Крок 6.3).
+> Логісту на фронтенді (`CODING_GUIDE.md`, Фаза 16) потрібна ОДНА форма
+> "додати авто", яка одразу приймає характеристики й причіп.
+
+## Крок 10.1 — specs/trailer стають записуваними (nested write)
+
+DRF за замовчуванням не вміє писати вкладені серіалізатори — треба
+самому перевизначити `create()`/`update()`. Онови `apps/cars/serializers.py`:
+
+```python
+# apps/cars/serializers.py
+class CarSerializer(serializers.ModelSerializer):
+    specs = CarSpecsSerializer(required=False)
+    trailer = TrailerSerializer(required=False)
+    driver_name = serializers.CharField(source="driver.name_driver", read_only=True)
+
+    class Meta:
+        model = Car
+        fields = [
+            "id", "name_car", "number_car", "fuel_card_number",
+            "amount_car", "default_tracking_mode",
+            "status_car", "is_active",
+            "specs", "trailer", "driver_name",
+        ]
+
+    def create(self, validated_data):
+        specs_data = validated_data.pop("specs", None)
+        trailer_data = validated_data.pop("trailer", None)
+        car = Car.objects.create(**validated_data)
+        if specs_data:
+            CarSpecs.objects.create(car=car, **specs_data)
+        if trailer_data:
+            Trailer.objects.create(car=car, **trailer_data)
+        return car
+
+    def update(self, instance, validated_data):
+        specs_data = validated_data.pop("specs", None)
+        trailer_data = validated_data.pop("trailer", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if specs_data is not None:
+            CarSpecs.objects.update_or_create(car=instance, defaults=specs_data)
+        if trailer_data is not None:
+            Trailer.objects.update_or_create(car=instance, defaults=trailer_data)
+        return instance
+```
+
+`specs`/`trailer` лишаються `required=False` — логіст може спершу
+завести авто без характеристик і дозаповнити пізніше тим самим
+`PATCH /api/cars/{id}/`.
+
+---
+
+## Крок 10.2 — Створення водія й закріплення за авто
+
+`DriverViewSet` уже приймає `car` як звичайне записуване поле —
+окремих змін не треба, тільки права з Кроку 9.2. Єдине бізнес-правило,
+яке варто перевірити: `Driver.car` — `OneToOneField`, тобто на рівні
+БД одне авто не може мати двох активних водіїв одночасно (спроба
+призначити зайняте авто впаде з `IntegrityError`/400 — DRF поверне це
+як validation error автоматично, додаткового коду не треба).
+
+---
+
+## Крок 10.3 — Перевірка
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/cars/" -Method POST `
+  -WebSession $s -ContentType "application/json" `
+  -Body (@{
+    name_car = "Sprinter"; number_car = "АА1234ВВ"
+    amount_car = "15000.00"; default_tracking_mode = "daily"
+    status_car = "active"; is_active = $true
+    specs = @{ vin_code = "WD..."; has_tail_lift = $true; has_trailer = $false }
+  } | ConvertTo-Json -Depth 5)
+```
+
+Відповідь має містити `"specs": {"vin_code": "WD...", ...}` одразу в
+тілі створеного авто — без окремого запиту в Django Admin.
+
+---
+
+## Крок 10.4 — Примітка: сканування накладних і бекенд
+
+Функціонал "водій сканує накладну" НЕ потребує нової моделі чи
+endpoint'у на бекенді. `RouteEvent` (Фаза 3.7) вже має поля
+`waybill_number`/`waybill_date`/`customer_name` саме для типу події
+`delivery` — фронтенд (`parseQR.ts`, `CODING_GUIDE.md` Фаза 15) лише
+розпізнає QR-код камерою й підставляє готові значення в ту саму форму
+`EventForm`, яка вже відправляє `POST /api/route-events/` (Фаза 6-7,
+захищено Кроком 9.4 вище). Це навмисно — задача сканера полягає в
+тому, щоб водій не набирав номер накладної вручну, а не в тому, щоб
+з'явився новий тип даних.
+
+---
+
+# ═══════════════════════════════════════════════════════════
 # ЩО ДАЛІ
 # ═══════════════════════════════════════════════════════════
 
 ## Наступні кроки:
 
-### Крок 9 — Завантаження реальних даних із 1С (management command)
-### Крок 10 — Docker + розгортання на Raspberry Pi
-### Крок 11 — GitHub Actions CI/CD
-### Крок 12 — Підключення React до реального API (VITE_USE_MOCK=false)
+### Крок 11 — Завантаження реальних даних із 1С (management command)
+### Крок 12 — Docker + розгортання на Raspberry Pi
+### Крок 13 — GitHub Actions CI/CD
+### Крок 14 — Підключення products/customers/waybills до реального React
+Cars/Drivers/RouteEvents (Фази 6-10) вже підключені й живі в проді —
+цей крок лишається тільки для products/customers/waybill-records
+(Фаза 8), коли з'явиться відповідний UI на фронтенді
+(`VITE_USE_MOCK=false`).
 
 ---
 
