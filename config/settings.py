@@ -191,4 +191,10 @@ REST_FRAMEWORK = {
     # Пагінація за замовчуванням
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 10,
+    # Без логіну — 401 замість тихого доступу до всього API.
+    # Аутентифікація (SessionAuthentication) вже стандартна в DRF,
+    # окремо налаштовувати не треба — сесія+CSRF з Фази 4.5 і так працює.
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
 }
