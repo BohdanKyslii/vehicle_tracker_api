@@ -8,4 +8,7 @@ class HasRole(BasePermission):
         return bool(profile and profile.role in self.allowed_roles)
 
 class IsManagerOrHead(HasRole):
-    allowed_roles = ('manager', 'head')
+    allowed_roles = ('manager', 'head', "logist")
+
+class IsLogistOrAbove(HasRole):
+    allowed_roles = ('logist', 'manager', 'head')

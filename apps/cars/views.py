@@ -11,7 +11,10 @@ from .serializers import (
     RouteEventCreateSerializer,
     RouteEventSerializer,
 )
+from apps.accounts.permissions import IsManagerOrHead, IsLogistOrAbove
+from rest_framework.permissions import IsAuthenticated
 
+WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 
 class CarViewSet(viewsets.ModelViewSet):
     """
@@ -37,6 +40,12 @@ class CarViewSet(viewsets.ModelViewSet):
             qs = qs.filter(default_tracking_mode=mode)
         return qs
 
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки logist/manager/head."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsLogistOrAbove()]
+        return [IsAuthenticated()]
+
     # @action — додатковий endpoint на конкретне авто
     @action(detail=True, methods=["get"])
     def status_logs(self, request, pk=None):
@@ -46,7 +55,7 @@ class CarViewSet(viewsets.ModelViewSet):
         serializer = CarStatusLogSerializer(logs, many=True)
         return Response(serializer.data)
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsManagerOrHead])
     def change_status(self, request, pk=None):
         """POST /api/cars/{id}/change_status/ — змінити статус."""
         car = self.get_object()
@@ -80,17 +89,21 @@ class DriverViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def me(self, request):
-        """
-        GET /api/drivers/me/ — поточний водій.
-        Поки повертає першого активного (до авторизації).
-        """
-        driver = Driver.objects.filter(is_active=True).first()
-        if not driver:
+        """GET /api/drivers/me/ — водій поточної сесії (Profile.driver)."""
+        profile = getattr(request.user, "profile", None)
+        if not profile or not profile.driver_id:
             return Response(
-                {"error": "Водія не знайдено"},
+                {
+                    "error": "Профіль не прив'язаний до картки водія — зверніться до диспетчера"},
                 status=404,
             )
-        return Response(DriverSerializer(driver).data)
+        return Response(DriverSerializer(profile.driver).data)
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки logist/manager/head."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsLogistOrAbove()]
+        return [IsAuthenticated()]
 
 
 class RouteEventViewSet(viewsets.ModelViewSet):
@@ -106,20 +119,30 @@ class RouteEventViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        profile = getattr(self.request.user, "profile", None)
+
+        # Водій бачить лише свої події; logist/manager/head — усі
+        if profile and profile.role == "driver":
+            qs = qs.filter(driver_id=profile.driver_id)
+
         car_id = self.request.query_params.get("car_id")
         date = self.request.query_params.get("date")
-
         if car_id:
             qs = qs.filter(car__id=car_id)
         if date == "today":
             from django.utils import timezone
-
-            today = timezone.localdate()
-            qs = qs.filter(event_ts__date=today)
+            qs = qs.filter(event_ts__date=timezone.localdate())
         elif date:
             qs = qs.filter(event_ts__date=date)
-
         return qs
+
+    def perform_create(self, serializer):
+        """Водій не може підписати подію на іншого водія — driver форсується з сесії."""
+        profile = getattr(self.request.user, "profile", None)
+        if profile and profile.role == "driver":
+            serializer.save(driver_id=profile.driver_id, car_id=profile.driver.car_id)
+        else:
+            serializer.save()
 
     @action(detail=False, methods=["get"])
     def last_odometer(self, request):
