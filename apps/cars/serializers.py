@@ -16,8 +16,8 @@ class TrailerSerializer(serializers.ModelSerializer):
 
 
 class CarSerializer(serializers.ModelSerializer):
-    specs = CarSpecsSerializer(read_only=True)
-    trailer = TrailerSerializer(read_only=True)
+    specs = CarSpecsSerializer(read_only=False)
+    trailer = TrailerSerializer(read_only=False)
     # source — звідки брати значення
     driver_name = serializers.CharField(
         source="driver.name_driver",
@@ -40,6 +40,27 @@ class CarSerializer(serializers.ModelSerializer):
             "driver_name",
         ]
 
+    def create(self, validated_data):
+        specs_data = validated_data.pop("specs", None)
+        trailer_data = validated_data.pop("trailer", None)
+        car = Car.objects.create(**validated_data)
+        if specs_data:
+            CarSpecs.objects.create(car=car, **specs_data)
+        if trailer_data:
+            Trailer.objects.create(car=car, **trailer_data)
+        return car
+
+    def update(self, instance, validated_data):
+        specs_data = validated_data.pop("specs", None)
+        trailer_data = validated_data.pop("trailer", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if specs_data is not None:
+            CarSpecs.objects.update_or_create(car=instance, defaults=specs_data)
+        if trailer_data is not None:
+            Trailer.objects.update_or_create(car=instance, defaults=trailer_data)
+        return instance
 
 class DriverSerializer(serializers.ModelSerializer):
     car_number = serializers.CharField(
