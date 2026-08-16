@@ -43,15 +43,16 @@ def approval_keyboard(user_id: int) -> dict:
     Одна кнопка на роль — адмін одразу підтверджує з правильною роллю,
     а не просто "Так/Ні" (роль, обрана користувачем при реєстрації, може
     бути неточною або незаданою — бот завжди реєструє водіїв як DRIVER).
-    HEAD виключено — ця роль призначається лише вручну, той самий виняток,
-    що й у RegisterSerializer для веб-реєстрації.
+    HEAD тут доступний (на відміну від `RegisterSerializer` для веб-
+    реєстрації, де він свідомо виключений) — ці кнопки й так бачать лише
+    ID зі списку `TELEGRAM_ADMIN_IDS`, тобто вже довірені підтверджувати
+    БУДЬ-яку роль; ховати саме HEAD від них не додавало жодного захисту.
     """
     from .models import Profile
 
     role_buttons = [
         {"text": f"✅ {label}", "callback_data": f"approve:{value}:{user_id}"}
         for value, label in Profile.Role.choices
-        if value != Profile.Role.HEAD
     ]
     return {
         "inline_keyboard": [

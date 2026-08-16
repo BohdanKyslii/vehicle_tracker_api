@@ -3028,6 +3028,536 @@ endpoint'у на бекенді. `RouteEvent` (Фаза 3.7) вже має по�
 ---
 
 # ═══════════════════════════════════════════════════════════
+# ФАЗА 11 — APPS/LOGISTICS: НАЙМАНИЙ ТРАНСПОРТ І СЛУЖБИ ДОСТАВКИ
+# ═══════════════════════════════════════════════════════════
+
+> Навіщо: `01_PROJECT_OVERVIEW.md` §5.3-5.4 описує два канали доставки,
+> для яких досі немає моделей — **найманий транспорт** (вносить логіст)
+> і **служби доставки** (вносить менеджер-операціоніст). Місячні
+> витрати власного автопарку (§5.2) уже реалізовані як `MonthlyCosts`
+> у `apps/cars` (Крок 3.5) — це не сюди. `apps/logistics` зареєстрований
+> у `INSTALLED_APPS` (Крок 2.4), але моделі й views для нього ще не
+> написані — `config/urls.py` містить закоментований рядок саме тому.
+> `WaybillRecord.delivery_channel` (Крок 3.6) уже має варіанти
+> `own`/`hired`/`carrier` — цій фазі лишається тільки прив'язати накладні
+> до конкретного рейсу/відправлення й виставити канал, за зразком
+> `assign_channel` з Кроку 8.5.
+
+## Крок 15.1 — Моделі HiredTransportTrip / CarrierShipment
+
+Відкрий `apps/logistics/models.py`:
+
+```python
+# apps/logistics/models.py
+from django.db import models
+
+
+class HiredTransportTrip(models.Model):
+    """
+    Single trip by hired (non-fleet) transport (§5.3 01_PROJECT_OVERVIEW.md).
+    Entered by the logist, one row per trip — cost is actual, from the carrier.
+    """
+
+    car_number = models.CharField(
+        max_length=20,
+        verbose_name="Номер авто (найманий)",
+    )
+    route_name = models.CharField(
+        max_length=255,
+        verbose_name="Назва маршруту",
+    )
+    trip_date = models.DateField(verbose_name="Дата рейсу")
+    pallets_count = models.SmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Кількість палет",
+    )
+    cost_uah = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name="Вартість доставки (грн)",
+    )
+    comment = models.TextField(blank=True, default="", verbose_name="Коментар")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "hired_transport_trips"
+        verbose_name = "Рейс найманого транспорту"
+        verbose_name_plural = "Рейси найманого транспорту"
+        ordering = ["-trip_date"]
+
+    def __str__(self):
+        return f"{self.car_number} — {self.route_name} ({self.trip_date})"
+
+
+class HiredTripWaybill(models.Model):
+    """
+    Waybill attached to a hired-transport trip.
+    waybill_number is unique — a waybill can belong to only one channel/trip.
+    """
+
+    trip = models.ForeignKey(
+        HiredTransportTrip,
+        on_delete=models.CASCADE,
+        related_name="waybills",
+        verbose_name="Рейс",
+    )
+    waybill_number = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Номер накладної",
+    )
+
+    class Meta:
+        db_table = "hired_trip_waybills"
+        verbose_name = "Накладна найманого рейсу"
+        verbose_name_plural = "Накладні найманого рейсу"
+
+    def __str__(self):
+        return f"{self.trip} — {self.waybill_number}"
+
+
+class CarrierShipment(models.Model):
+    """
+    Shipment handed off to a delivery service (§5.4 01_PROJECT_OVERVIEW.md).
+    Entered by the manager when assigning waybills to НП / Міст Експрес / etc.
+    """
+
+    class Carrier(models.TextChoices):
+        NOVA_POSHTA = "nova_poshta", "Нова Пошта"
+        MIST_EXPRESS = "mist_express", "Міст Експрес"
+        OTHER = "other", "Інша служба"
+
+    carrier = models.CharField(
+        max_length=20,
+        choices=Carrier.choices,
+        verbose_name="Служба доставки",
+    )
+    ttn = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="ТТН",
+    )
+    shipment_date = models.DateField(verbose_name="Дата відправки")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "carrier_shipments"
+        verbose_name = "Відправлення служби доставки"
+        verbose_name_plural = "Відправлення служб доставки"
+        ordering = ["-shipment_date"]
+
+    def __str__(self):
+        return f"{self.ttn} ({self.get_carrier_display()})"
+
+
+class CarrierShipmentWaybill(models.Model):
+    """
+    Waybill included in a carrier shipment. One ТТН can cover several waybills.
+    """
+
+    shipment = models.ForeignKey(
+        CarrierShipment,
+        on_delete=models.CASCADE,
+        related_name="waybills",
+        verbose_name="Відправлення",
+    )
+    waybill_number = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Номер накладної",
+    )
+
+    class Meta:
+        db_table = "carrier_shipment_waybills"
+        verbose_name = "Накладна відправлення"
+        verbose_name_plural = "Накладні відправлення"
+
+    def __str__(self):
+        return f"{self.shipment.ttn} — {self.waybill_number}"
+
+
+class CarrierCost(models.Model):
+    """
+    Row from the weekly carrier cost registry import, matched to a
+    CarrierShipment by ttn (§5.4). shipment stays null until a matching
+    CarrierShipment.ttn is found — registries can arrive before or after
+    the shipment is registered.
+    """
+
+    shipment = models.ForeignKey(
+        CarrierShipment,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="costs",
+        verbose_name="Відправлення",
+    )
+    ttn = models.CharField(max_length=50, verbose_name="ТТН")
+    weight_kg = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        verbose_name="Вага відправлення (кг)",
+    )
+    cost_uah = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name="Вартість доставки (грн)",
+    )
+    cost_date = models.DateField(verbose_name="Дата")
+    imported_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "carrier_costs"
+        verbose_name = "Витрата служби доставки"
+        verbose_name_plural = "Витрати служб доставки"
+        ordering = ["-cost_date"]
+        indexes = [models.Index(fields=["ttn"])]
+
+    def __str__(self):
+        return f"{self.ttn} — {self.cost_uah} грн"
+```
+
+`HiredTripWaybill.waybill_number` і `CarrierShipmentWaybill.waybill_number` —
+`unique=True` навмисно: одна накладна не може одночасно бути в двох рейсах
+чи відправленнях, це той самий принцип ексклюзивності каналів, що й
+`WaybillRecord.delivery_channel` (Крок 3.6).
+
+---
+
+## Крок 15.2 — Міграції
+
+```bash
+python manage.py makemigrations logistics
+python manage.py migrate
+```
+
+---
+
+## Крок 15.3 — Admin
+
+Відкрий `apps/logistics/admin.py`:
+
+```python
+# apps/logistics/admin.py
+from django.contrib import admin
+
+from .models import (
+    CarrierCost,
+    CarrierShipment,
+    CarrierShipmentWaybill,
+    HiredTransportTrip,
+    HiredTripWaybill,
+)
+
+
+class HiredTripWaybillInline(admin.TabularInline):
+    model = HiredTripWaybill
+    extra = 0
+
+
+@admin.register(HiredTransportTrip)
+class HiredTransportTripAdmin(admin.ModelAdmin):
+    list_display = ["car_number", "route_name", "trip_date", "cost_uah"]
+    list_filter = ["trip_date"]
+    search_fields = ["car_number", "route_name"]
+    inlines = [HiredTripWaybillInline]
+
+
+class CarrierShipmentWaybillInline(admin.TabularInline):
+    model = CarrierShipmentWaybill
+    extra = 0
+
+
+@admin.register(CarrierShipment)
+class CarrierShipmentAdmin(admin.ModelAdmin):
+    list_display = ["ttn", "carrier", "shipment_date"]
+    list_filter = ["carrier", "shipment_date"]
+    search_fields = ["ttn"]
+    inlines = [CarrierShipmentWaybillInline]
+
+
+@admin.register(CarrierCost)
+class CarrierCostAdmin(admin.ModelAdmin):
+    list_display = ["ttn", "shipment", "weight_kg", "cost_uah", "cost_date"]
+    list_filter = ["cost_date"]
+    search_fields = ["ttn"]
+```
+
+---
+
+## Крок 15.4 — Серіалізатори
+
+Створи `apps/logistics/serializers.py`:
+
+```python
+# apps/logistics/serializers.py
+from rest_framework import serializers
+
+from .models import (
+    CarrierCost,
+    CarrierShipment,
+    CarrierShipmentWaybill,
+    HiredTransportTrip,
+    HiredTripWaybill,
+)
+
+
+class HiredTripWaybillSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HiredTripWaybill
+        fields = ["id", "waybill_number"]
+
+
+class HiredTransportTripSerializer(serializers.ModelSerializer):
+    waybills = HiredTripWaybillSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = HiredTransportTrip
+        fields = [
+            "id", "car_number", "route_name", "trip_date",
+            "pallets_count", "cost_uah", "comment",
+            "waybills", "created_at",
+        ]
+        read_only_fields = ["created_at"]
+
+
+class CarrierShipmentWaybillSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CarrierShipmentWaybill
+        fields = ["id", "waybill_number"]
+
+
+class CarrierShipmentSerializer(serializers.ModelSerializer):
+    waybills = CarrierShipmentWaybillSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CarrierShipment
+        fields = ["id", "carrier", "ttn", "shipment_date", "waybills", "created_at"]
+        read_only_fields = ["created_at"]
+
+
+class CarrierCostSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CarrierCost
+        fields = ["id", "shipment", "ttn", "weight_kg", "cost_uah", "cost_date", "imported_at"]
+        # shipment виставляється автоматично матчингом по ttn — див. Крок 15.5
+        read_only_fields = ["shipment", "imported_at"]
+```
+
+---
+
+## Крок 15.5 — Views та URLs
+
+Відкрий `apps/logistics/views.py`. Права — за ролями з `01_PROJECT_OVERVIEW.md`
+§2: найманий транспорт вносить **логіст** (`IsLogistOrAbove`, Крок 9.2),
+служби доставки — **менеджер-операціоніст** (`IsManagerOrHead`, Крок 4.5.8):
+
+```python
+# apps/logistics/views.py
+from rest_framework import filters, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.accounts.permissions import IsLogistOrAbove, IsManagerOrHead
+from apps.waybills.models import WaybillRecord
+
+from .models import (
+    CarrierCost,
+    CarrierShipment,
+    CarrierShipmentWaybill,
+    HiredTransportTrip,
+    HiredTripWaybill,
+)
+from .serializers import (
+    CarrierCostSerializer,
+    CarrierShipmentSerializer,
+    HiredTransportTripSerializer,
+)
+
+WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
+
+
+class HiredTransportTripViewSet(viewsets.ModelViewSet):
+    """
+    CRUD для рейсів найманого транспорту (§5.3).
+    Додатковий endpoint: /api/hired-transport-trips/{id}/attach_waybill/
+    """
+
+    queryset = HiredTransportTrip.objects.prefetch_related("waybills").all()
+    serializer_class = HiredTransportTripSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["car_number", "route_name"]
+    ordering_fields = ["trip_date", "cost_uah"]
+    ordering = ["-trip_date"]
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки logist/manager/head."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsLogistOrAbove()]
+        return [IsAuthenticated()]
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsLogistOrAbove])
+    def attach_waybill(self, request, pk=None):
+        """
+        POST /api/hired-transport-trips/{id}/attach_waybill/ — {"waybill_number": "..."}
+        Прив'язує накладну до рейсу й виставляє WaybillRecord.delivery_channel="hired".
+        Ексклюзивність каналів — та сама вимога, що й у Кроці 8.5 (assign_channel).
+        """
+        trip = self.get_object()
+        waybill_number = request.data.get("waybill_number")
+        if not waybill_number:
+            return Response({"error": "waybill_number обов'язковий"}, status=400)
+
+        if HiredTripWaybill.objects.filter(waybill_number=waybill_number).exists():
+            return Response(
+                {"error": "Накладна вже прив'язана до рейсу найманого транспорту"},
+                status=400,
+            )
+
+        records = WaybillRecord.objects.filter(waybill_number=waybill_number)
+        already_other_channel = records.exclude(
+            delivery_channel__in=[None, WaybillRecord.DeliveryChannel.HIRED]
+        ).exists()
+        if already_other_channel:
+            return Response({"error": "Накладна вже призначена іншому каналу доставки"}, status=400)
+
+        HiredTripWaybill.objects.create(trip=trip, waybill_number=waybill_number)
+        records.update(delivery_channel=WaybillRecord.DeliveryChannel.HIRED)
+
+        return Response(HiredTransportTripSerializer(trip).data)
+
+
+class CarrierShipmentViewSet(viewsets.ModelViewSet):
+    """
+    CRUD для відправлень служб доставки (§5.4).
+    Додатковий endpoint: /api/carrier-shipments/{id}/attach_waybill/
+    """
+
+    queryset = CarrierShipment.objects.prefetch_related("waybills", "costs").all()
+    serializer_class = CarrierShipmentSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["ttn"]
+    ordering_fields = ["shipment_date"]
+    ordering = ["-shipment_date"]
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки manager/head."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsManagerOrHead])
+    def attach_waybill(self, request, pk=None):
+        """
+        POST /api/carrier-shipments/{id}/attach_waybill/ — {"waybill_number": "..."}
+        Аналог attach_waybill у HiredTransportTripViewSet, тільки канал "carrier".
+        """
+        shipment = self.get_object()
+        waybill_number = request.data.get("waybill_number")
+        if not waybill_number:
+            return Response({"error": "waybill_number обов'язковий"}, status=400)
+
+        if CarrierShipmentWaybill.objects.filter(waybill_number=waybill_number).exists():
+            return Response(
+                {"error": "Накладна вже прив'язана до відправлення служби доставки"},
+                status=400,
+            )
+
+        records = WaybillRecord.objects.filter(waybill_number=waybill_number)
+        already_other_channel = records.exclude(
+            delivery_channel__in=[None, WaybillRecord.DeliveryChannel.CARRIER]
+        ).exists()
+        if already_other_channel:
+            return Response({"error": "Накладна вже призначена іншому каналу доставки"}, status=400)
+
+        CarrierShipmentWaybill.objects.create(shipment=shipment, waybill_number=waybill_number)
+        records.update(delivery_channel=WaybillRecord.DeliveryChannel.CARRIER)
+
+        return Response(CarrierShipmentSerializer(shipment).data)
+
+
+class CarrierCostViewSet(viewsets.ModelViewSet):
+    """Реєстр витрат від служб доставки (щотижневий імпорт, матчинг по ТТН)."""
+
+    queryset = CarrierCost.objects.select_related("shipment").all()
+    serializer_class = CarrierCostSerializer
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ["cost_date"]
+    ordering = ["-cost_date"]
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки manager/head."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        """Матчинг по ТТН — якщо відправлення вже зареєстроване, лінкуємо автоматично."""
+        ttn = serializer.validated_data.get("ttn")
+        shipment = CarrierShipment.objects.filter(ttn=ttn).first()
+        serializer.save(shipment=shipment)
+```
+
+Створи `apps/logistics/urls.py`:
+
+```python
+# apps/logistics/urls.py
+from rest_framework.routers import DefaultRouter
+
+from .views import CarrierCostViewSet, CarrierShipmentViewSet, HiredTransportTripViewSet
+
+router = DefaultRouter()
+router.register(r"hired-transport-trips", HiredTransportTripViewSet, basename="hired-transport-trips")
+router.register(r"carrier-shipments", CarrierShipmentViewSet, basename="carrier-shipments")
+router.register(r"carrier-costs", CarrierCostViewSet, basename="carrier-costs")
+
+urlpatterns = router.urls
+```
+
+Відкрий `config/urls.py` і розкоментуй `logistics`:
+
+```python
+# config/urls.py
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("api/", include("apps.accounts.urls")),
+    path("api/", include("apps.cars.urls")),
+    path("api/", include("apps.products.urls")),
+    path("api/", include("apps.customers.urls")),
+    path("api/", include("apps.waybills.urls")),
+    path("api/", include("apps.logistics.urls")),
+]
+```
+
+---
+
+## Крок 15.6 — Перевірка
+
+```bash
+python manage.py check
+python manage.py runserver
+```
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/hired-transport-trips/" -Method GET
+Invoke-RestMethod -Uri "http://localhost:8000/api/carrier-shipments/" -Method GET
+Invoke-RestMethod -Uri "http://localhost:8000/api/carrier-costs/" -Method GET
+```
+
+Усі три мають повернути `401` без авторизації (Крок 9.1 — `IsAuthenticated`
+за замовчуванням) і `200` з порожнім `results: []` після логіну.
+
+> **Аналітика (§8, `apps/analytics`)** свідомо лишається поза цією фазою —
+> це запити `annotate()`/`Sum()` над уже наявними даними (`RouteEvent`,
+> `MonthlyCosts`, `WaybillRecord`, тепер і `HiredTransportTrip`/`CarrierCost`),
+> тому має сенс писати її вже під конкретні дашборди фронтенду, коли
+> в БД накопичиться реальна історія — див. Крок 14 нижче.
+
+---
+
+# ═══════════════════════════════════════════════════════════
 # ЩО ДАЛІ
 # ═══════════════════════════════════════════════════════════
 
