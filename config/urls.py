@@ -22,10 +22,10 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include("apps.accounts.urls")),
     path("api/", include("apps.cars.urls")),
-    # TODO(Крок 8): views.py + urls.py для products/customers/waybills/logistics
+    path("api/", include("apps.products.urls")),
+    path("api/", include("apps.customers.urls")),
+    path("api/", include("apps.waybills.urls")),
+    # TODO: views.py + urls.py для logistics
     # ще не реалізовані — розкоментувати, коли з'являться відповідні urls.py.
-    # path("api/", include("apps.products.urls")),
-    # path("api/", include("apps.customers.urls")),
-    # path("api/", include("apps.waybills.urls")),
     # path("api/", include("apps.logistics.urls")),
 ]
