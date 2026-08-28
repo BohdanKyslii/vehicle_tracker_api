@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+
 class Car(models.Model):
     """
     Vehicle from the company fleet.
@@ -278,8 +279,7 @@ class Trailer(models.Model):
         help_text=_("Рік випуску"),
     )
 
-    is_active = models.BooleanField(
-        default=True, verbose_name=_("Активний"))
+    is_active = models.BooleanField(default=True, verbose_name=_("Активний"))
 
     class Meta:
         db_table = "trailers"
@@ -287,7 +287,7 @@ class Trailer(models.Model):
         verbose_name_plural = _("Причепи")
 
     def __str__(self):
-        return f"{self.number_trailer} — {self.model}"
+        return f"{self.number_trailer} — {self.name_trailer}"
 
 
 class Driver(models.Model):

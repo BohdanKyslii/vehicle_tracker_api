@@ -17,7 +17,10 @@ class TrailerSerializer(serializers.ModelSerializer):
 
 class CarSerializer(serializers.ModelSerializer):
     specs = CarSpecsSerializer(read_only=False)
-    trailer = TrailerSerializer(read_only=False)
+    # required=False — фронтенд надсилає "trailer" лише коли hasTrailer=true;
+    # без цього DRF вважає вкладений серіалізатор обов'язковим і відхиляє
+    # створення авто без причепа з 400 "This field is required."
+    trailer = TrailerSerializer(read_only=False, required=False, allow_null=True)
     # source — звідки брати значення
     driver_name = serializers.CharField(
         source="driver.name_driver",
@@ -61,6 +64,7 @@ class CarSerializer(serializers.ModelSerializer):
         if trailer_data is not None:
             Trailer.objects.update_or_create(car=instance, defaults=trailer_data)
         return instance
+
 
 class DriverSerializer(serializers.ModelSerializer):
     car_number = serializers.CharField(
