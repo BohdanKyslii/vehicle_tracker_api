@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 
 from .models import Car, CarSpecs, CarStatusLog, Driver, MonthlyCosts, RouteEvent, Trailer
@@ -43,6 +44,11 @@ class CarSerializer(serializers.ModelSerializer):
             "driver_name",
         ]
 
+    # transaction.atomic() — без цього падіння на Trailer/CarSpecs (напр.
+    # IntegrityError) лишало вже створений Car в БД напівготовим: наступна
+    # спроба з тим самим номером падала на "вже існує", хоча по факту
+    # авто так і не було коректно створено жодного разу
+    @transaction.atomic
     def create(self, validated_data):
         specs_data = validated_data.pop("specs", None)
         trailer_data = validated_data.pop("trailer", None)
@@ -53,6 +59,7 @@ class CarSerializer(serializers.ModelSerializer):
             Trailer.objects.create(car=car, **trailer_data)
         return car
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         specs_data = validated_data.pop("specs", None)
         trailer_data = validated_data.pop("trailer", None)
