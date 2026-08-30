@@ -143,7 +143,7 @@ class AdminUserViewSet(
     @action(detail=True, methods=["post"], url_path="link-telegram")
     def link_telegram(self, request, pk=None):
         """
-        POST /api/users/{id}/link-telegram/ — {"sourceUserId": <id>}
+        POST /api/users/{id}/link-telegram/ — {"source_user_id": <id>}
         Переносить profile.telegram_id із джерела на цей (уже наявний
         email-)акаунт. Джерело обмежене саме непідтвердженою Telegram-
         заявкою (is_active=False, username "tg_<id>") — навмисно, а не
@@ -151,7 +151,7 @@ class AdminUserViewSet(
         акаунтом непередбачувано зачепило б і його Driver/картку водія.
         """
         target = self.get_object()
-        source_id = request.data.get("sourceUserId")
+        source_id = request.data.get("source_user_id")
         try:
             source = User.objects.select_related("profile", "profile__driver").get(id=source_id)
         except (User.DoesNotExist, TypeError, ValueError):
