@@ -169,6 +169,12 @@ class MonthlyCostsViewSet(viewsets.ModelViewSet):
     queryset = MonthlyCosts.objects.select_related("car").all()
     serializer_class = MonthlyCostsSerializer
 
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки logist/manager/head."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsLogistOrAbove()]
+        return [IsAuthenticated()]
+
     def get_queryset(self):
         qs = super().get_queryset()
         car_id = self.request.query_params.get("car_id")
