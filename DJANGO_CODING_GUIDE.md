@@ -2774,7 +2774,10 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 10,
-    # Без логіну — 401 замість тихого доступу до всього API.
+    # Без логіну — явна відмова замість тихого доступу до всього API.
+    # На практиці DRF тут віддає 403, не 401 — бо SessionAuthentication
+    # (перший автентифікатор за замовчуванням) не має WWW-Authenticate
+    # челенджа, і DRF занижує 401 → 403 (деталі й перевірка — Крок 15.6).
     # Аутентифікація (SessionAuthentication) вже стандартна в DRF,
     # окремо налаштовувати не треба — сесія+CSRF з Фази 4.5 і так працює.
     "DEFAULT_PERMISSION_CLASSES": [
@@ -3546,8 +3549,17 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/carrier-shipments/" -Method GE
 Invoke-RestMethod -Uri "http://localhost:8000/api/carrier-costs/" -Method GET
 ```
 
-Усі три мають повернути `401` без авторизації (Крок 9.1 — `IsAuthenticated`
-за замовчуванням) і `200` з порожнім `results: []` після логіну.
+Усі три мають повернути `403` без авторизації (не `401`, попри коментар
+у Кроці 9.1 — DRF-деталь: `DEFAULT_AUTHENTICATION_CLASSES` тут за
+замовчуванням `[SessionAuthentication, BasicAuthentication]`, і DRF
+бере `WWW-Authenticate`-заголовок для 401-відповіді з ПЕРШОГО
+автентифікатора в списку (`APIView.handle_exception`); `SessionAuthentication.authenticate_header()`
+завжди повертає `None` — сесійна автентифікація не має челенджа на
+кшталт Basic-auth — тому DRF свідомо занижує `401 → 403`
+(`exc.status_code = status.HTTP_403_FORBIDDEN`), і так для будь-якого
+ендпоінта в цьому проєкті, не лише логістики. Перевірено 19.08.2026:
+`/api/cars/` (Фаза 9, давно робочий) віддає той самий `403`) і `200`
+з порожнім `results: []` після логіну.
 
 > **Аналітика (§8, `apps/analytics`)** свідомо лишається поза цією фазою —
 > це запити `annotate()`/`Sum()` над уже наявними даними (`RouteEvent`,

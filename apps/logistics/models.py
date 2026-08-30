@@ -75,7 +75,7 @@ class HiredTripWaybill(models.Model):
     )
 
     waybill_number = models.CharField(
-        max_length=20,
+        max_length=50,
         unique=True,
         verbose_name=_("Номер накладної"),
         help_text=_("Номер накладної, який приєднано до рейсу"),

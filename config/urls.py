@@ -25,7 +25,5 @@ urlpatterns = [
     path("api/", include("apps.products.urls")),
     path("api/", include("apps.customers.urls")),
     path("api/", include("apps.waybills.urls")),
-    # TODO: views.py + urls.py для logistics
-    # ще не реалізовані — розкоментувати, коли з'являться відповідні urls.py.
-    # path("api/", include("apps.logistics.urls")),
+    path("api/", include("apps.logistics.urls")),
 ]
