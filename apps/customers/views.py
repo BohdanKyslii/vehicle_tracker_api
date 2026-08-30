@@ -1,11 +1,16 @@
 from rest_framework import viewsets, filters
+from rest_framework.permissions import IsAuthenticated
+
+from apps.accounts.permissions import IsManagerOrHead
 
 from .models import Customer, Store, StoreDeliveryAddress
 from .serializers import CustomerSerializer, StoreSerializer, StoreDeliveryAddressSerializer
 
+WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
+
 
 class CustomerViewSet(viewsets.ModelViewSet):
-    queryset = Customer.objects.prefetch_related("store").all()
+    queryset = Customer.objects.prefetch_related("stores").all()
     serializer_class = CustomerSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = [
@@ -27,8 +32,14 @@ class CustomerViewSet(viewsets.ModelViewSet):
             qs = qs.filter(is_active=is_active == "true")
         return qs
 
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — довідникові дані, /panel (head)."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]
+
 class StoreViewSet(viewsets.ModelViewSet):
-    queryset = Store.objects.select_related("customer").prefetch_related("delivery_address").all()
+    queryset = Store.objects.select_related("customer").prefetch_related("delivery_addresses").all()
     serializer_class = StoreSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = [
@@ -44,6 +55,12 @@ class StoreViewSet(viewsets.ModelViewSet):
             qs = qs.filter(customer_id=customer_id)
         return qs
 
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — довідникові дані, /panel (head)."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]
+
 class StoreDeliveryAddressViewSet(viewsets.ModelViewSet):
     queryset = StoreDeliveryAddress.objects.select_related("store").all()
     serializer_class = StoreDeliveryAddressSerializer
@@ -55,3 +72,9 @@ class StoreDeliveryAddressViewSet(viewsets.ModelViewSet):
         if store_id:
             qs = qs.filter(store_id=store_id)
         return qs
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — довідникові дані, /panel (head)."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]

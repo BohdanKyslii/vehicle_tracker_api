@@ -52,3 +52,39 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("id", "username", "email", "is_active", "profile")
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    """
+    Для /api/users/ (панель head — apps.accounts.views.AdminUserViewSet).
+    role — джерело `profile.role`: DRF сам розгортає його в
+    validated_data["profile"]["role"] завдяки dotted source, тож PATCH
+    {"role": "...", "is_active": true} апрувить заявку одним запитом,
+    тим самим, що робить бот у _approve_user (bot.py).
+    """
+
+    role = serializers.ChoiceField(source="profile.role", choices=Profile.Role.choices, required=False)
+    phone = serializers.CharField(source="profile.phone", read_only=True)
+    telegram_id = serializers.IntegerField(source="profile.telegram_id", read_only=True, allow_null=True)
+    driver_id = serializers.IntegerField(source="profile.driver_id", read_only=True, allow_null=True)
+    driver_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id", "username", "email", "is_active", "date_joined",
+            "role", "phone", "telegram_id", "driver_id", "driver_name",
+        )
+        read_only_fields = ("username", "email", "date_joined")
+
+    def get_driver_name(self, obj):
+        driver = getattr(obj.profile, "driver", None)
+        return driver.name_driver if driver else None
+
+    def update(self, instance, validated_data):
+        profile_data = validated_data.pop("profile", {})
+        instance = super().update(instance, validated_data)
+        if "role" in profile_data:
+            instance.profile.role = profile_data["role"]
+            instance.profile.save(update_fields=["role"])
+        return instance

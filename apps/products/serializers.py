@@ -60,12 +60,12 @@ class ProductLogisticsSerializer(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    # Вкладений серіалізатор (read_only — тільки для читання)
     category_name = serializers.CharField(
         source="category.name_category",
         read_only=True,
     )
-    logistics = ProductLogisticsSerializer(read_only=True)
+    # required=False — товар можна створити без логістики, дозаповнити пізніше
+    logistics = ProductLogisticsSerializer(required=False)
 
     class Meta:
         model = Product
@@ -80,3 +80,17 @@ class ProductSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def create(self, validated_data):
+        logistics_data = validated_data.pop("logistics", None)
+        product = Product.objects.create(**validated_data)
+        if logistics_data:
+            ProductLogistics.objects.create(product=product, **logistics_data)
+        return product
+
+    def update(self, instance, validated_data):
+        logistics_data = validated_data.pop("logistics", None)
+        instance = super().update(instance, validated_data)
+        if logistics_data is not None:
+            ProductLogistics.objects.update_or_create(product=instance, defaults=logistics_data)
+        return instance

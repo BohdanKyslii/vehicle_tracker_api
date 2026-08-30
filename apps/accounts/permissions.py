@@ -12,3 +12,11 @@ class IsManagerOrHead(HasRole):
 
 class IsLogistOrAbove(HasRole):
     allowed_roles = ('logist', 'manager', 'head')
+
+class IsHeadOnly(HasRole):
+    """
+    Лише head, без 'menedzher/logist' — на відміну від IsManagerOrHead.
+    Для операцій, де розширений доступ був би зміною прав доступу самих
+    користувачів (ролі, підтвердження реєстрацій, Telegram-лінкування).
+    """
+    allowed_roles = ('head',)
