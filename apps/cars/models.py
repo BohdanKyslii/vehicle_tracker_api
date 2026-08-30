@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+
 class Car(models.Model):
     """
     Vehicle from the company fleet.
@@ -12,6 +13,12 @@ class Car(models.Model):
         ACTIVE = "active", _("Активне")
         REPAIR = "repair", _("Ремонт")
         INACTIVE = "inactive", _("Неактивне")
+        # Вимушений простій через регуляцію часу праці водія/авто (тахограф/чіп)
+        PAUSE = "pause", _("Пауза")
+        # Загальний простій через відсутність водія (лікарняний, відпустка,
+        # вихідний за сімейними обставинами тощо) — без деталізації причини
+        # тут, вона фіксується окремо через change_status(reason=...)
+        DRIVER_DOWNTIME = "driver_downtime", _("Простій (водій)")
 
     # Режим трекінгу водія
     class TrackingMode(models.TextChoices):
@@ -278,8 +285,7 @@ class Trailer(models.Model):
         help_text=_("Рік випуску"),
     )
 
-    is_active = models.BooleanField(
-        default=True, verbose_name=_("Активний"))
+    is_active = models.BooleanField(default=True, verbose_name=_("Активний"))
 
     class Meta:
         db_table = "trailers"
@@ -287,7 +293,7 @@ class Trailer(models.Model):
         verbose_name_plural = _("Причепи")
 
     def __str__(self):
-        return f"{self.number_trailer} — {self.model}"
+        return f"{self.number_trailer} — {self.name_trailer}"
 
 
 class Driver(models.Model):

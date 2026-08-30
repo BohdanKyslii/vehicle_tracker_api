@@ -860,10 +860,18 @@ class Car(models.Model):
     """
 
     # Статус авто — choices обмежує значення поля
+    # ✅ Додано 2026-08-28 (migration 0005_car_status_pause_downtime):
+    # PAUSE — вимушений простій через регуляцію часу праці водія/авто
+    # (тахограф); DRIVER_DOWNTIME — простій через відсутність водія
+    # (лікарняний/відпустка/сімейні обставини), без деталізації причини
+    # на рівні статусу — вона фіксується per-change через
+    # change_status(reason=...) → CarStatusLog.
     class Status(models.TextChoices):
         ACTIVE = "active", "Активне"
         REPAIR = "repair", "Ремонт"
         INACTIVE = "inactive", "Неактивне"
+        PAUSE = "pause", "Пауза"
+        DRIVER_DOWNTIME = "driver_downtime", "Простій (водій)"
 
     # Режим трекінгу водія
     class TrackingMode(models.TextChoices):
@@ -1035,15 +1043,36 @@ class Trailer(models.Model):
     Created only when car.specs.has_trailer = True.
     """
 
+    # ✅ Резинхронізовано 2026-08-28: поле `model` (нижче в оригінальному
+    # тексті гайду) було замінене на `name_trailer`/`vin_code` прямо в
+    # models.py в якийсь момент після написання цього гайду, БЕЗ
+    # makemigrations — тобто без жодної міграції й без оновлення цього
+    # тексту. У БД лишалась орфанна колонка `model` NOT NULL без
+    # дефолту, тому кожне створення авто з причепом падало з
+    # IntegrityError (500), замасковане на фронтенді під незрозумілий
+    # 400 (бо CarSerializer.create() не був атомарним — Car встигав
+    # закомітитись до падіння на Trailer). Виправлено міграцією
+    # 0004_fix_trailer_schema_drift.py (SeparateDatabaseAndState,
+    # ідемпотентний SQL) + transaction.atomic() у Кроці 10 нижче.
+    # Модель нижче показує вже АКТУАЛЬНИЙ стан.
+
     car = models.OneToOneField(
         Car,
         on_delete=models.CASCADE,
         related_name="trailer",
         verbose_name="Авто",
     )
-    model = models.CharField(
-        max_length=100,
-        verbose_name="Модель причепа",
+    name_trailer = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        verbose_name="Назва причепа",
+    )
+    vin_code = models.CharField(
+        max_length=17,
+        blank=True,
+        default="",
+        verbose_name="VIN код",
     )
     number_trailer = models.CharField(
         max_length=20,
@@ -1062,7 +1091,7 @@ class Trailer(models.Model):
         verbose_name_plural = "Причепи"
 
     def __str__(self):
-        return f"{self.number_trailer} — {self.model}"
+        return f"{self.number_trailer} — {self.name_trailer}"
 
 
 class Driver(models.Model):
@@ -2799,6 +2828,13 @@ REST_FRAMEWORK = {
 картку), але не створювати/видаляти авто чи інших водіїв. Онови
 `apps/cars/views.py`:
 
+> ⚠️ Назва `IsManagerOrHead` вводить в оману: `allowed_roles` фактично
+> **включає** і `"logist"` — тобто логіст теж проходить цю перевірку
+> (і саме тому фронтендовий швидкий перемикач статусу авто в
+> `FleetList` працює для логіста без жодних змін тут). Якщо колись
+> знадобиться дія СПРАВДІ лише для manager/head (без логіста) —
+> знадобиться нова, окрема permission-клас, а не звуження цього.
+
 ```python
 # apps/cars/views.py
 from apps.accounts.permissions import IsManagerOrHead
@@ -2944,9 +2980,11 @@ DRF за замовчуванням не вміє писати вкладені 
 
 ```python
 # apps/cars/serializers.py
+from django.db import transaction
+
 class CarSerializer(serializers.ModelSerializer):
     specs = CarSpecsSerializer(required=False)
-    trailer = TrailerSerializer(required=False)
+    trailer = TrailerSerializer(required=False, allow_null=True)
     driver_name = serializers.CharField(source="driver.name_driver", read_only=True)
 
     class Meta:
@@ -2958,6 +2996,9 @@ class CarSerializer(serializers.ModelSerializer):
             "specs", "trailer", "driver_name",
         ]
 
+    # transaction.atomic() — без цього падіння на Trailer/CarSpecs
+    # (напр. IntegrityError) лишало вже створений Car в БД напівготовим
+    @transaction.atomic
     def create(self, validated_data):
         specs_data = validated_data.pop("specs", None)
         trailer_data = validated_data.pop("trailer", None)
@@ -2968,6 +3009,7 @@ class CarSerializer(serializers.ModelSerializer):
             Trailer.objects.create(car=car, **trailer_data)
         return car
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         specs_data = validated_data.pop("specs", None)
         trailer_data = validated_data.pop("trailer", None)
@@ -2983,7 +3025,12 @@ class CarSerializer(serializers.ModelSerializer):
 
 `specs`/`trailer` лишаються `required=False` — логіст може спершу
 завести авто без характеристик і дозаповнити пізніше тим самим
-`PATCH /api/cars/{id}/`.
+`PATCH /api/cars/{id}/`. `trailer` додатково має `allow_null=True` —
+фронтенд (`CarForm.tsx`) взагалі не надсилає ключ `trailer`, коли
+причепа немає, і без `required=False` DRF відхиляв би це 400-кою
+"This field is required." (виправлено 2026-08-28, разом з
+`@transaction.atomic` вище — той самий резинх, що й нотатка при
+визначенні `Trailer` у Кроці 3.5).
 
 ---
 

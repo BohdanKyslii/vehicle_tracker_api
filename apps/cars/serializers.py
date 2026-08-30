@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 
 from .models import Car, CarSpecs, CarStatusLog, Driver, MonthlyCosts, RouteEvent, Trailer
@@ -17,7 +18,10 @@ class TrailerSerializer(serializers.ModelSerializer):
 
 class CarSerializer(serializers.ModelSerializer):
     specs = CarSpecsSerializer(read_only=False)
-    trailer = TrailerSerializer(read_only=False)
+    # required=False — фронтенд надсилає "trailer" лише коли hasTrailer=true;
+    # без цього DRF вважає вкладений серіалізатор обов'язковим і відхиляє
+    # створення авто без причепа з 400 "This field is required."
+    trailer = TrailerSerializer(read_only=False, required=False, allow_null=True)
     # source — звідки брати значення
     driver_name = serializers.CharField(
         source="driver.name_driver",
@@ -40,6 +44,11 @@ class CarSerializer(serializers.ModelSerializer):
             "driver_name",
         ]
 
+    # transaction.atomic() — без цього падіння на Trailer/CarSpecs (напр.
+    # IntegrityError) лишало вже створений Car в БД напівготовим: наступна
+    # спроба з тим самим номером падала на "вже існує", хоча по факту
+    # авто так і не було коректно створено жодного разу
+    @transaction.atomic
     def create(self, validated_data):
         specs_data = validated_data.pop("specs", None)
         trailer_data = validated_data.pop("trailer", None)
@@ -50,6 +59,7 @@ class CarSerializer(serializers.ModelSerializer):
             Trailer.objects.create(car=car, **trailer_data)
         return car
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         specs_data = validated_data.pop("specs", None)
         trailer_data = validated_data.pop("trailer", None)
@@ -61,6 +71,7 @@ class CarSerializer(serializers.ModelSerializer):
         if trailer_data is not None:
             Trailer.objects.update_or_create(car=instance, defaults=trailer_data)
         return instance
+
 
 class DriverSerializer(serializers.ModelSerializer):
     car_number = serializers.CharField(
