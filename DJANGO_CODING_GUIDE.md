@@ -3616,13 +3616,708 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/carrier-costs/" -Method GET
 
 ---
 
+# ФАЗА 12 — ІМПОРТ НАКЛАДНИХ З 1С (РУБІН/ЄСП/ОПТ)
+
+> Рішення нижче — прямий переклад відповідей користувача з
+> `task_description/IMPORT_1C_SPEC.md` (Q1-Q12, усі закриті
+> 2026-08-20) у код. Модель `WaybillRecord` (Крок 3.6) НЕ змінюється —
+> усі потрібні поля вже є, включно з `import_batch_id`, який тут
+> нарешті отримує реальний сенс.
+>
+> **Синхронізація з фронтендом:** `vehicle_cost_tracker/CODING_GUIDE.md`,
+> Фаза 22 (`Крок 22.1-22.8`), написана ДО цього розділу як робоче
+> припущення про форму ендпоінта. Ендпоінт (`POST
+> /api/waybill-records/import_file/`) і форма відповіді
+> (`batch_id`/`imported`/`deleted`/`dates`/`errors`) нижче збігаються з
+> тим припущенням один-в-один. **Не збігається одна деталь** — права
+> доступу: Крок 22.1 фронтенду написаний під припущення "```IsManagerOrHead```
+> = ті самі ролі, що гейтують `/waybills` (без logist)", але реальний
+> `IsManagerOrHead` в `apps/accounts/permissions.py` (Крок 4.5.8) також
+> впускає `logist` (навмисно лишено так заради `Car.change_status` і
+> `CarrierShipment`/`CarrierCost` з Фази 11 — logist там потрібен).
+> Бізнес-процес тут («менеджер-операціоніст в офісі», §1 спеку) явно не
+> включає logist, і фронтенд-гайд навіть тестує це напряму (Крок 22.8,
+> п.5: `logist` → `403`) — тому нижче (Крок 16.7) заводимо ОКРЕМИЙ,
+> вужчий клас `IsManagerOrHeadOnly`, а не переюзаємо `IsManagerOrHead`.
+
+## Крок 16.1 — Нова залежність: xlrd
+
+ЄСП/ОПТ-файли — це справжній legacy `.xls` (BIFF/OLE2 формат), не
+сучасний `.xlsx`. `openpyxl` такий формат не читає взагалі, а
+`pandas` — зайва вага (важкий пакет із `numpy`, `pytz` тощо) заради
+одного парсера на Raspberry Pi. `xlrd==2.0.1` — останній випуск, що ще
+вміє класичний `.xls` (з версії 2.0 `xlrd` навмисно прибрав підтримку
+`.xlsx`, залишивши тільки legacy-формат — саме те, що тут треба).
+
+```bash
+pip install xlrd==2.0.1
+```
+
+Додай рядок у `requirements.txt` (у алфавітному порядку серед інших
+залежностей):
+
+```
+xlrd==2.0.1
+```
+
+РУБІН — звичайний `.csv` у кодуванні `cp1251`, стандартний модуль
+`csv` з бібліотеки Python цілком підходить, окремої залежності не
+треба.
+
+> **Не займаємось зараз:** `client_max_body_size` у nginx на Pi
+> (дефолт — 1 МБ) технічно менший за історичний ЄСП-зразок (7.6 МБ),
+> але очікуваний ЩОТИЖНЕВИЙ файл — 2000-4000 рядків, це на порядки
+> менше і в дефолт вкладається. Якщо колись знадобиться заливати файл
+> такого ж розміру, як історичний зразок — підняти цей ліміт окремо.
+
+---
+
+## Крок 16.2 — `apps/waybills/importers/base.py`: спільні структури
+
+Створи пакет `apps/waybills/importers/` (з порожнім `__init__.py`) і
+файл `base.py` — спільні для обох форматів структури даних. Головна
+ідея (рішення 10 плану): парсери НІКОЛИ не торкаються БД, лише
+перетворюють файл на список `ParsedRow` — це дає легкий перехід на
+фонову задачу (Celery) пізніше, якщо тижневі файли колись переростуть
+2000-4000 рядків, без переписування самого парсингу.
+
+```python
+# apps/waybills/importers/base.py
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from typing import Optional
+
+
+@dataclass
+class ParsedRow:
+    """
+    Один рядок накладної, уже приведений до спільного вигляду —
+    незалежно від того, з якого файлу (РУБІН CSV чи ЄСП/ОПТ XLS) він
+    прийшов. customer_id заповнений лише для РУБІН (там є реальний
+    1С-ID клієнта); для ЄСП/ОПТ = None — там клієнта як такого немає
+    (Q2), клієнтом/магазином виступає сама точка (store_name).
+    """
+
+    legal_entity: str
+    waybill_number: str
+    waybill_date: date
+    line_position: int
+    customer_id: Optional[int]
+    customer_name: str
+    store_name: str
+    product_articl: int
+    product_name: str
+    quantity: Decimal
+    price_uah: Decimal
+    total_uah: Decimal
+    comment: str = ""
+
+
+@dataclass
+class RowError:
+    """Рядок, який не вдалось розпізнати — не зупиняє весь імпорт."""
+
+    row: int
+    field: str
+    message: str
+
+
+class HeaderMismatchError(Exception):
+    """
+    Заголовок файлу не збігається з очікуваним — рішення 2/11 плану:
+    краще гучно впасти з точним переліком розбіжності, ніж тихо
+    змапити не ту колонку не туди.
+    """
+
+    def __init__(self, expected: list[str], actual: list[str]):
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"Очікувані колонки: {expected}. Отримані: {actual}")
+```
+
+---
+
+## Крок 16.3 — `apps/waybills/importers/rubin_csv.py`
+
+Формат РУБІН підтверджений напряму зі зразка
+(`task_description/file_1C/SalesLineItem_history.csv`) — 15 колонок,
+`cp1251`, роздільник `;`, значення в лапках.
+
+```python
+# apps/waybills/importers/rubin_csv.py
+import csv
+import io
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+from .base import HeaderMismatchError, ParsedRow, RowError
+
+# Порядок і назви колонок — з розбору файлу (IMPORT_1C_SPEC.md, §2)
+REQUIRED_COLUMNS = [
+    "customer_id", "customer_name", "date", "invoice_number", "line_number",
+    "store_address", "product_id", "product_articl", "product_name",
+    "quantity", "price_invoice", "line_total", "comment", "contract_name",
+    "doc_type",
+]
+
+
+def _invoice_number_digits(raw: str) -> str:
+    """
+    'РБН00008425' -> '8425' — тільки цифри, провідні нулі ЗНИКАЮТЬ.
+    Не довільний вибір: звірено з src/utils/parseQR.ts фронтенду, який
+    парсить QR, що сканує водій ('7908:03.08.26' — без нулів). Якщо
+    тут лишити нулі — RouteEvent.waybill_number (водій) і
+    WaybillRecord.waybill_number (імпорт) ніколи не зматчаться.
+    """
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    return str(int(digits)) if digits else ""
+
+
+def parse_rubin_csv(file_obj) -> tuple[list[ParsedRow], list[RowError]]:
+    """
+    file_obj — бінарний файловий об'єкт (наприклад, upload.file із
+    Django UploadedFile). Кодування cp1251 — обгортаємо в текстовий
+    режим тут, а не просимо виклик передавати вже декодований текст.
+    """
+    text_stream = io.TextIOWrapper(file_obj, encoding="cp1251", newline="")
+    reader = csv.DictReader(text_stream, delimiter=";")
+
+    header = reader.fieldnames or []
+    if header != REQUIRED_COLUMNS:
+        raise HeaderMismatchError(REQUIRED_COLUMNS, header)
+
+    rows: list[ParsedRow] = []
+    errors: list[RowError] = []
+
+    for i, raw in enumerate(reader, start=2):  # рядок 1 — заголовок
+        try:
+            waybill_number = _invoice_number_digits(raw["invoice_number"])
+            if not waybill_number:
+                errors.append(RowError(i, "invoice_number", "Не знайдено номера накладної"))
+                continue
+
+            rows.append(ParsedRow(
+                legal_entity="Rubin",
+                waybill_number=waybill_number,
+                waybill_date=datetime.strptime(raw["date"].strip(), "%Y-%m-%d").date(),
+                line_position=int(float(raw["line_number"])),
+                customer_id=int(raw["customer_id"]),
+                customer_name=raw["customer_name"].strip(),
+                store_name=raw["store_address"].strip(),
+                product_articl=int(raw["product_articl"]),
+                product_name=raw["product_name"].strip(),
+                # quantity: + відвантаження, - повернення (Q7 — можливе саме тут)
+                quantity=Decimal(raw["quantity"]),
+                price_uah=Decimal(raw["price_invoice"]),
+                total_uah=Decimal(raw["line_total"]),
+                comment=(raw.get("comment") or "").strip(),
+            ))
+        except (ValueError, InvalidOperation, KeyError) as exc:
+            errors.append(RowError(i, "-", f"Не вдалось розпарсити рядок: {exc}"))
+
+    return rows, errors
+```
+
+> **Q4 (сума для аналітики).** Для РУБІН відповідь була "`price_invoice`
+> або `line_total`" — обидва вже потрапляють у `WaybillRecord` як
+> `price_uah`/`total_uah` без додаткової трансформації, окремого поля
+> не треба.
+
+---
+
+## Крок 16.4 — `apps/waybills/importers/esp_opt_xls.py`
+
+ЄСП і ОПТ парсяться одним кодом (Q10 — та сама структура файлу, різні
+значення точок), різниця лише в параметрі `legal_entity`.
+
+```python
+# apps/waybills/importers/esp_opt_xls.py
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+import xlrd
+
+from .base import HeaderMismatchError, ParsedRow, RowError
+
+# Оригінальні 13 колонок (IMPORT_1C_SPEC.md, §3) + "АЗС" — новий
+# стовпець, який ІТ додали за домовленістю (Q2), бо "Магазин" — це
+# склад-відправник, а не отримувач. Перевірено 2026-08-30 напряму
+# xlrd-читанням оновленого файлу (`documents/file_1C/Переміщення зі
+# складів на АЗС.xls`, фронтенд-репо, з'явився того ж дня): колонка
+# називається саме "АЗС" (значення на кшталт "АЗС Киев Богатирская"),
+# НЕ "name_store", як спершу назвали в IMPORT_1C_SPEC.md Q2 (там був
+# лише опис по суті, не буквальний заголовок стовпця) — 5-та позиція
+# підтвердилась.
+EXPECTED_HEADER = [
+    "№", "Магазин", "ДатаДок", "Докум", "АЗС", "Категория",
+    "Код", "Товар", "Количество", "ЦенаВх", "СуммаВх", "СуммаР",
+    "КоличВупак", "Вес",
+]
+
+
+def _doc_number(raw: str) -> str:
+    """
+    'ПеремМежМагазРасх 0000401034' -> '0000401034' — хвостовий числовий
+    токен, провідні нулі ЗБЕРІГАЮТЬСЯ (на відміну від РУБІН). Звірено з
+    src/utils/parseQR.ts: '0000391877:06.07.26' — водій сканує саме з
+    нулями для цього каналу.
+    """
+    return raw.strip().split()[-1]
+
+
+def _to_decimal(value) -> Decimal:
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+    return Decimal(str(value).strip().replace(",", "."))
+
+
+def parse_esp_opt_xls(file_obj, legal_entity: str) -> tuple[list[ParsedRow], list[RowError]]:
+    """
+    file_obj — бінарний файловий об'єкт. xlrd читає весь файл у
+    пам'ять одразу (`file_contents=...`) — прийнятно для очікуваних
+    2000-4000 рядків/тиждень (Q12), про фонову задачу можна подумати
+    пізніше, якщо обсяг суттєво зросте.
+    """
+    book = xlrd.open_workbook(file_contents=file_obj.read())
+    sheet = book.sheet_by_index(0)
+
+    # Рядок 0 — службовий ("Печать таблицы значений"), рядок 1 — заголовок
+    header = [str(c).strip() for c in sheet.row_values(1)]
+    col = {name: idx for idx, name in enumerate(header)}
+    missing = [name for name in EXPECTED_HEADER if name not in col]
+    if missing:
+        raise HeaderMismatchError(EXPECTED_HEADER, header)
+
+    rows: list[ParsedRow] = []
+    errors: list[RowError] = []
+
+    for i in range(2, sheet.nrows):
+        values = sheet.row_values(i)
+
+        # Службові рядки (наприклад "ИТОГО:") детектимо НЕ по тексту,
+        # а по тому, що обов'язкові числові колонки не парсяться —
+        # ловить будь-який подібний рядок, не тільки цей один (Q5).
+        try:
+            articl = int(_to_decimal(values[col["Код"]]))
+            quantity = _to_decimal(values[col["Количество"]])
+        except (InvalidOperation, ValueError, IndexError):
+            continue
+
+        try:
+            waybill_date = datetime.strptime(
+                str(values[col["ДатаДок"]]).strip(), "%d.%m.%y"
+            ).date()  # Q6: '26' завжди означає 2026, без винятків
+
+            store_name = str(values[col["АЗС"]]).strip()
+
+            rows.append(ParsedRow(
+                legal_entity=legal_entity,
+                waybill_number=_doc_number(str(values[col["Докум"]])),
+                waybill_date=waybill_date,
+                line_position=i,  # унікальний в межах файлу — досить для unique_together
+                customer_id=None,  # немає окремого клієнта в цьому каналі (Q2)
+                customer_name=store_name,
+                store_name=store_name,
+                product_articl=articl,
+                product_name=str(values[col["Товар"]]).strip(),
+                quantity=quantity,
+                # total_uah = СуммаВх (собівартість), НЕ СуммаР (роздрібна) — Q4.
+                # Побічний ефект: аналітика "% від суми продажу" для цього
+                # каналу фактично рахуватиме "% від собівартості" — не
+                # виправляємо тут, зафіксовано в IMPORT_1C_SPEC.md/плані.
+                price_uah=_to_decimal(values[col["ЦенаВх"]]),
+                total_uah=_to_decimal(values[col["СуммаВх"]]),
+            ))
+        except (ValueError, InvalidOperation, IndexError) as exc:
+            errors.append(RowError(i + 1, "-", f"Не вдалось розпарсити рядок: {exc}"))
+
+    return rows, errors
+```
+
+> **Повернення (Q7).** У цьому каналі негативної `quantity` не буває
+> взагалі (окремий процес, не через цей файл) — парсер цього не
+> перевіряє явно, просто в даних їх ніколи не буде.
+
+---
+
+## Крок 16.5 — `apps/waybills/matching.py`: Customer/Store/Product і синтетичні ID
+
+Тут — уся логіка "знайти або створити" (рішення 4/6 плану). Товар
+завжди має реальний 1С-артикул в обох форматах (Q1 — єдиний довідник),
+синтетичний ID йому не треба. Клієнту й магазину — треба, коли у файлі
+немає числового 1С-ID (РУБІН: `store_address` — вільний текст; ЄСП/ОПТ:
+немає окремого клієнта взагалі).
+
+```python
+# apps/waybills/matching.py
+from django.db.models import Max
+
+from apps.customers.models import Customer, Store
+from apps.products.models import Product
+
+# Синтетичні ID стартують високо, щоб гарантовано не перетнутись із
+# реальними 1С-ID (у переглянутих зразках — 3-6-значні).
+SYNTHETIC_ID_START = 900_000_000
+
+
+class MatchingCache:
+    """
+    Кеш на час одного імпорту (одного HTTP-запиту): уникає повторних
+    SELECT для того самого клієнта/магазину/товару в межах тисяч рядків
+    одного файлу, і видає синтетичні ID без запиту до БД на кожен рядок
+    (лічильник рахується один раз при першому створенні).
+    """
+
+    def __init__(self):
+        self._customers: dict = {}
+        self._stores: dict = {}
+        self._products: dict = {}
+        self._next_customer_id: int | None = None
+        self._next_store_id: int | None = None
+
+    def _alloc_customer_id(self) -> int:
+        if self._next_customer_id is None:
+            current = Customer.objects.filter(
+                id_customer__gte=SYNTHETIC_ID_START
+            ).aggregate(m=Max("id_customer"))["m"]
+            self._next_customer_id = (current or SYNTHETIC_ID_START - 1) + 1
+        value = self._next_customer_id
+        self._next_customer_id += 1
+        return value
+
+    def _alloc_store_id(self) -> int:
+        if self._next_store_id is None:
+            current = Store.objects.filter(
+                id_store__gte=SYNTHETIC_ID_START
+            ).aggregate(m=Max("id_store"))["m"]
+            self._next_store_id = (current or SYNTHETIC_ID_START - 1) + 1
+        value = self._next_store_id
+        self._next_store_id += 1
+        return value
+
+    def get_or_create_product(self, articl: int, name: str) -> Product:
+        if articl in self._products:
+            return self._products[articl]
+        product, _ = Product.objects.get_or_create(
+            id_product=articl,
+            defaults={"name_product": name},
+        )
+        self._products[articl] = product
+        return product
+
+    def get_or_create_rubin_customer(self, customer_id: int, name: str) -> Customer:
+        """РУБІН має реальний 1С customer_id — синтетичний тут не треба."""
+        if customer_id in self._customers:
+            return self._customers[customer_id]
+        customer, _ = Customer.objects.get_or_create(
+            id_customer=customer_id,
+            defaults={"name_customer": name},
+        )
+        self._customers[customer_id] = customer
+        return customer
+
+    def get_or_create_rubin_store(self, customer: Customer, address: str) -> Store:
+        """
+        store_address — вільний текст без 1С-ID (§2 спеку). Синтетичний
+        Store замість store=null+текст у comment (рішення 6 плану) —
+        дає фільтрацію по точках ціною можливих дублікатів, якщо адреса
+        трохи відрізняється тиждень до тижня (нема fuzzy-дедуплікації).
+        """
+        key = (customer.pk, address)
+        if key in self._stores:
+            return self._stores[key]
+        store = Store.objects.filter(customer=customer, store_address=address).first()
+        if store is None:
+            store = Store.objects.create(
+                id_store=self._alloc_store_id(),
+                customer=customer,
+                name_store=address,
+                store_address=address,
+            )
+        self._stores[key] = store
+        return store
+
+    def get_or_create_esp_opt_point(self, legal_entity: str, name_store: str) -> tuple[Customer, Store]:
+        """
+        ЄСП/ОПТ не мають окремого клієнта у файлі (Q2) — точка одночасно
+        і "клієнт", і "магазин". Один "парасольковий" Customer на
+        юрособу (напр. "Точки ESP"), під ним — Store на кожну унікальну
+        точку з файлу.
+        """
+        umbrella_name = f"Точки {legal_entity}"
+        customer = self._customers.get(umbrella_name)
+        if customer is None:
+            customer = Customer.objects.filter(name_customer=umbrella_name).first()
+            if customer is None:
+                customer = Customer.objects.create(
+                    id_customer=self._alloc_customer_id(),
+                    name_customer=umbrella_name,
+                )
+            self._customers[umbrella_name] = customer
+
+        key = (customer.pk, name_store)
+        store = self._stores.get(key)
+        if store is None:
+            store = Store.objects.filter(customer=customer, name_store=name_store).first()
+            if store is None:
+                store = Store.objects.create(
+                    id_store=self._alloc_store_id(),
+                    customer=customer,
+                    name_store=name_store,
+                )
+            self._stores[key] = store
+        return customer, store
+```
+
+> **Наступний крок (поза цією фазою):** автостворені `Customer`/`Store`/
+> `Product` матимуть мінімум даних (лише назва) — дозаповнення вручну
+> пізніше через `/panel` (ще не збудований на фронтенді).
+
+---
+
+## Крок 16.6 — `apps/waybills/importing.py`: транзакція перезаливки
+
+```python
+# apps/waybills/importing.py
+from django.db import transaction
+from django.utils import timezone
+
+from .importers.base import ParsedRow
+from .matching import MatchingCache
+from .models import WaybillRecord
+
+
+def import_waybills(legal_entity: str, rows: list[ParsedRow]) -> dict:
+    """
+    Перезаливка за датами з файлу (Q9): видаляє старі WaybillRecord
+    ЦІЄЇ юрособи за ВСІ дати, що зустрічаються у rows, вставляє нові —
+    одна транзакція. Решту історії (інші дати, інші юрособи) не чіпає.
+    """
+    batch_id = f"{legal_entity}_{timezone.now():%Y%m%d%H%M%S}"
+    dates = sorted({row.waybill_date for row in rows})
+    cache = MatchingCache()
+
+    with transaction.atomic():
+        deleted, _ = WaybillRecord.objects.filter(
+            legal_entity=legal_entity,
+            waybill_date__in=dates,
+        ).delete()
+
+        records = []
+        for row in rows:
+            product = cache.get_or_create_product(row.product_articl, row.product_name)
+
+            if row.customer_id is not None:
+                customer = cache.get_or_create_rubin_customer(row.customer_id, row.customer_name)
+                store = cache.get_or_create_rubin_store(customer, row.store_name)
+            else:
+                customer, store = cache.get_or_create_esp_opt_point(legal_entity, row.store_name)
+
+            records.append(WaybillRecord(
+                legal_entity=row.legal_entity,
+                waybill_number=row.waybill_number,
+                waybill_date=row.waybill_date,
+                line_position=row.line_position,
+                customer=customer,
+                customer_name=row.customer_name,
+                store=store,
+                product=product,
+                product_name=row.product_name,
+                quantity=row.quantity,
+                price_uah=row.price_uah,
+                total_uah=row.total_uah,
+                comment=row.comment,
+                import_batch_id=batch_id,
+                # total_weight_kg/total_volume_cbm/volumetric_weight_kg
+                # лишаються null — нема усталеної формули об'єм→вага в
+                # жодному з репо, не вигадуємо коефіцієнт (рішення 8).
+            ))
+
+        WaybillRecord.objects.bulk_create(records)
+
+    return {
+        "batch_id": batch_id,
+        "imported": len(records),
+        "deleted": deleted,
+        "dates": [d.isoformat() for d in dates],
+    }
+```
+
+> **Про `unique_together = [["waybill_number", "line_position"]]`
+> (Крок 3.6).** Обмеження діє глобально, не в межах `legal_entity`.
+> На практиці РУБІН (`"8425"`) і ЄСП/ОПТ (`"0000401034"`) мають різні
+> формати номерів, тож перетин малоймовірний — але якщо колись
+> `bulk_create` впаде на `IntegrityError` саме тут, це перше місце, куди
+> дивитись. Модель свідомо не змінюємо в межах цієї фази (рішення
+> плану) — окрема розмова, якщо це реально станеться.
+
+---
+
+## Крок 16.7 — `views.py`: ендпоінт `import_file` і права CRUD
+
+Спершу — новий, вужчий permission-клас у
+`apps/accounts/permissions.py` (див. примітку на початку Фази 12 про
+розбіжність з `IsManagerOrHead`):
+
+```python
+# apps/accounts/permissions.py — доповнення
+class IsManagerOrHeadOnly(HasRole):
+    """
+    На відміну від IsManagerOrHead (яка навмисно впускає й logist —
+    для Car.change_status і CarrierShipment/CarrierCost), тут logist
+    НЕ повинен мати доступу: імпорт із 1С — задача
+    менеджера-операціоніста в офісі (IMPORT_1C_SPEC.md, §1), а не
+    логіста.
+    """
+    allowed_roles = ('manager', 'head')
+```
+
+Тепер `apps/waybills/views.py` — додається `get_permissions()`
+(закриває діру: раніше тут не було жодного `permission_classes`, і
+писати міг будь-який залогинений користувач, включно з водієм) і сам
+`import_file`:
+
+```python
+# apps/waybills/views.py
+from rest_framework import filters, viewsets
+from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from apps.accounts.permissions import IsManagerOrHeadOnly
+from .importers.base import HeaderMismatchError
+from .importers.esp_opt_xls import parse_esp_opt_xls
+from .importers.rubin_csv import parse_rubin_csv
+from .importing import import_waybills
+from .models import WaybillRecord
+from .serializers import WaybillRecordSerializer
+
+WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
+
+
+class WaybillRecordViewSet(viewsets.ModelViewSet):
+    """
+    CRUD для реєстру накладних + завантаження з 1С.
+    Додаткові endpoints: /assign_channel/, /unassigned/, /import_file/.
+    """
+
+    queryset = WaybillRecord.objects.select_related("customer", "store", "product").all()
+    serializer_class = WaybillRecordSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["waybill_number", "customer_name", "product_name"]
+    ordering_fields = ["waybill_date", "waybill_number", "total_uah"]
+    ordering = ["-waybill_date", "waybill_number"]
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки manager/head (не logist)."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHeadOnly()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        # ... без змін, як у Кроці 8.5 (фільтри customer_id/product_id/
+        # legal_entity/delivery_channel/date_from/date_to) ...
+        return super().get_queryset()
+
+    # unassigned() і assign_channel() — без змін, як у Кроці 8.5.
+
+    @action(
+        detail=False, methods=["post"],
+        permission_classes=[IsAuthenticated, IsManagerOrHeadOnly],
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def import_file(self, request):
+        """
+        POST /api/waybill-records/import_file/ — multipart/form-data:
+        {legal_entity: "Rubin"|"ESP"|"OPT", file: <.csv|.xls>}.
+        Юрособу завжди обирає менеджер явно (Q8) — бекенд не вгадує її
+        з вмісту файлу.
+        """
+        legal_entity = request.data.get("legal_entity")
+        upload = request.FILES.get("file")
+
+        if legal_entity not in [c.value for c in WaybillRecord.LegalEntity]:
+            return Response({"error": "Невірна юридична особа"}, status=400)
+        if not upload:
+            return Response({"error": "Файл обов'язковий"}, status=400)
+
+        try:
+            if legal_entity == WaybillRecord.LegalEntity.RUBIN:
+                rows, errors = parse_rubin_csv(upload.file)
+            else:
+                rows, errors = parse_esp_opt_xls(upload, legal_entity)
+        except HeaderMismatchError as exc:
+            return Response(
+                {
+                    "error": "Формат файлу не відповідає очікуваному",
+                    "expected": exc.expected,
+                    "actual": exc.actual,
+                },
+                status=400,
+            )
+
+        if not rows:
+            return Response(
+                {
+                    "error": "Жодного рядка не вдалось розпізнати",
+                    "errors": [{"row": e.row, "field": e.field, "message": e.message} for e in errors],
+                },
+                status=400,
+            )
+
+        result = import_waybills(legal_entity, rows)
+        result["errors"] = [{"row": e.row, "field": e.field, "message": e.message} for e in errors]
+        return Response(result, status=201)
+```
+
+`apps/waybills/urls.py` не змінюється — `import_file` реєструється
+автоматично DRF-роутером через `@action`, той самий `router.register`
+з Кроку 8.5 вже його підхопить.
+
+---
+
+## Крок 16.8 — Перевірка на реальних файлах
+
+```bash
+python manage.py check
+python manage.py runserver
+```
+
+Через DRF browsable API (залогинений як `manager`/`head`) або Postman:
+
+1. `POST /api/waybill-records/import_file/`, `legal_entity=Rubin`,
+   `file=task_description/file_1C/SalesLineItem_history.csv` →
+   `imported` > 0, `errors` порожній або короткий.
+2. Той самий файл вдруге → `imported` те саме число, `deleted` не
+   нуль, `GET /api/waybill-records/?legal_entity=Rubin` не подвоївся.
+3. `legal_entity=ESP`, `file=Переміщення зі складів на АЗС.xls` —
+   оновлений зразок (з'явився 2026-08-30, 8 049 664 байт) уже
+   перевірено напряму `xlrd`-читанням: 5-та колонка заголовка — `АЗС`
+   (значення на кшталт `"АЗС Киев Богатирская"`), `EXPECTED_HEADER`
+   (Крок 16.4) уже узгоджено з цим — має пройти без
+   `HeaderMismatchError`.
+4. Навмисно зіпсований заголовок (перейменована колонка) → `400`, не
+   `500`.
+5. `GET /api/waybill-records/` без авторизації → `403` (як і всюди в
+   проєкті, Крок 15.6). Залогинений `driver`/`logist` → `POST
+   /api/waybill-records/import_file/` теж `403` (новий
+   `IsManagerOrHeadOnly`, Крок 16.7); `manager`/`head` → `201`.
+
+---
+
 # ═══════════════════════════════════════════════════════════
 # ЩО ДАЛІ
 # ═══════════════════════════════════════════════════════════
 
 ## Наступні кроки:
 
-### Крок 11 — Завантаження реальних даних із 1С (management command)
+~~### Крок 11 — Завантаження реальних даних із 1С (management command)~~
+Зроблено інакше, ніж тут спершу планувалось: не CLI-команда, а
+upload-ендпоінт із формою на фронтенді — менеджер сам вивантажує файл
+раз на тиждень (§1 `IMPORT_1C_SPEC.md`), а не адмін через консоль.
+Готово в **Фазі 12** вище (Кроки 16.1-16.8).
 ### Крок 12 — Docker + розгортання на Raspberry Pi
 ### Крок 13 — GitHub Actions CI/CD
 ### Крок 14 — Підключення products/customers/waybills до реального React

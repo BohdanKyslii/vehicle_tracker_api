@@ -2,7 +2,7 @@
 
 > Оновлюється після кожної значущої сесії. Детальна історія — `CHANGES.md`.
 
-**Останнє оновлення:** 2026-08-16
+**Останнє оновлення:** 2026-08-30
 
 ---
 
@@ -124,9 +124,130 @@ Backend (`vehicle_tracker_api`, Django/DRF) розгорнутий на Raspberr
   виправлено напряму (`SELECT setval('drivers_id_seq', 4, true)`,
   `SELECT setval('cars_id_seq', 4, true)`). Заявнику треба
   зареєструватись повторно — старих даних не лишилось, конфлікту не буде.
+- **2026-08-19:** `apps/logistics` (Фаза 11, набрана руками користувачем
+  за Кроком 15.1-15.5) — виправлено після рев'ю:
+  - `models.py`: `pallets_count` був `DecimalField` без `max_digits`/
+    `decimal_places` (блокував `makemigrations`) → `SmallIntegerField`;
+    `HiredTripWaybill.waybill_number` `max_length=20` → `50` (вирівняно
+    з `WaybillRecord`/`CarrierShipmentWaybill`, окрема міграція
+    `0002_alter_hiredtripwaybill_waybill_number`); прибрано зайвий
+    `from unicodedata import decimal`; `CarrierShipmentWaybill.__str__`
+    посилався на неіснуюче `self.shipment_ttn` замість `self.shipment.ttn`;
+    `CarrierCost.Meta.db_table` був обгорнутий у `_()` (переклад
+    замість імені таблиці).
+  - `admin.py`: `line_display` → `list_display` (typo, Django мовчки
+    ігнорував — колонки в адмінці не показувались).
+  - `views.py` — тут була причина, чому падав **увесь** проєкт:
+    клас `HiredTransporttripViewSet` (маленька `t`) не збігався з
+    імпортом `HiredTransportTripViewSet` у `urls.py` → `ImportError`
+    при кожному старті, бо `config/urls.py` вже підключає
+    `apps.logistics.urls`. Також: `permission_classes=[IsAuthenticated(), ...]`
+    (зайві дужки — екземпляр замість класу, впав би на першому ж
+    запиті до `attach_waybill`); `serializer.validated_data.get["ttn"]`
+    (квадратні дужки замість виклику `.get("ttn")` — `TypeError` на
+    кожному `POST /api/carrier-costs/`); три зайвих імпорти
+    (`multiprocessing.connection.deliver_challenge`, `from .. import
+    waybills`, `from ..cars.views import WRITE_ACTIONS` — одразу
+    перезаписаний локальним визначенням).
+  - Перевірено: `manage.py check` чистий, `runserver` піднімається,
+    усі три ендпоінти (`hired-transport-trips`/`carrier-shipments`/
+    `carrier-costs`) віддають `403` без авторизації — очікувано (нижче).
+- **2026-08-19:** з'ясовано остаточно, чому DRF в цьому проєкті всюди
+  віддає `403`, а не `401` без логіну (гайд, Крок 9.1/15.6, раніше
+  помилково стверджував `401`) — `APIView.handle_exception()` бере
+  `WWW-Authenticate` для 401-відповіді з ПЕРШОГО автентифікатора в
+  `DEFAULT_AUTHENTICATION_CLASSES` (`[SessionAuthentication,
+  BasicAuthentication]`); `SessionAuthentication.authenticate_header()`
+  завжди `None` → DRF свідомо занижує `401 → 403`. Це стосується
+  **всього** проєкту (перевірено на `/api/cars/`, той самий `403`), не
+  специфіка логістики. Виправлено коментарі в обох місцях гайду.
+- **2026-08-20:** досліджено реальні вивантаження з 1С
+  (`task_description/file_1C/SalesLineItem_history.csv` — РУБІН,
+  `Переміщення зі складів на АЗС.xls` — ЄСП) для підготовки Кроку 11
+  (`DJANGO_CODING_GUIDE.md`). Знахідки й 12 відкритих питань — у
+  новому `task_description/IMPORT_1C_SPEC.md`. Ключове: РУБІН і
+  ЄСП/ОПТ мають **різні** формати (CSV vs legacy `.xls`, різні
+  колонки); `product_articl` (РУБІН) і `Код` (ЄСП) — схоже, спільний
+  артикул на всі юрособи. Файл ще чекає відповідей користувача — Крок
+  11 гайду поки не написаний.
+- **2026-08-24:** оновлено весь `task_description/transport/`
+  (8 файлів: `01_PROJECT_OVERVIEW.md` … `08_PROJECT_STRUCTURE.md`) —
+  звірено з реальним кодом обох репозиторіїв, `DJANGO_CODING_GUIDE.md`,
+  `CODING_GUIDE.md` і `IMPORT_1C_SPEC.md`. Ключові виправлення:
+  `products`/`customers`/`stores` PK — `IntegerField`, не `VARCHAR`, як
+  планувалось; додано `car_specs`/`trailers`/`car_status_logs`/`profiles`
+  (яких не було в первинному плані); `06_IMPLEMENTATION_PLAN.md`
+  повністю переписано — старий план "Тиждень 1-5" замінено таблицею
+  реального прогресу по Фазах обох гайдів + рекомендованим порядком
+  продовження (зараз: Фаза 14→16 фронтенду, бо Mini App-редірект
+  2026-08-19 веде логіста/адміна на `/fleet`, а там порожня заглушка).
+  **Не займали** `task_description/warehouse/` (окремий, непов'язаний
+  Django-застосунок) — не плутати з `transport/`.
+- **2026-08-24 (продовження):** оновлено й кореневі `README.md` та
+  `AGENTS_GLOBAL.md` (v3 → v4) — прибрано твердження "бекенд майбутній,
+  поза scope MVP" / "Mock-дані, у майбутньому DRF"; додано реальний
+  backend tech stack, попередження про `403` замість `401`,
+  застереження про `task_description/warehouse/` (не цей проєкт) і про
+  те, що обидва `*_CODING_GUIDE.md` — сценарії для ручного набору, не
+  changelog.
+- **2026-08-24 (продовження 2):** оновлено й `AI_AGENT_CONTEXT.md`
+  (v3 → v4) — крім загальної застарілості ("MVP на Mock-даних"), там
+  були й фактичні помилки незалежно від дати: `RouteEvent.type` замість
+  реального `eventType`, вигадані значення enum (`'fuel'`,
+  `'depot_finish'` — таких нема, реальних 8: `depot_start`/`delivery`/
+  `parking_end`/`depot_return`/`refuel`/`other_cost`/`return_goods`/
+  `extra_cargo`), компоненти й хуки, яких у коді ніколи не було
+  (`ChannelBadge`, `PalletsInput`, `StoreConfirmModal`,
+  `useWaybillChannelGuard`). Виправлено на реальний інвентар,
+  посилання на `transport/03_TYPESCRIPT_TYPES.md` і `05_...` для
+  повного списку.
+
+- **2026-08-30:** усі 12 відкритих питань `IMPORT_1C_SPEC.md` (Q1-Q12)
+  закриті користувачем ще 2026-08-20; цю сесію переведено в код гайду —
+  `DJANGO_CODING_GUIDE.md`, нова `# ФАЗА 12 — ІМПОРТ НАКЛАДНИХ З 1С`
+  (Кроки 16.1-16.8, лише текст гайду, руками код ще не набирався,
+  той самий підхід "спершу гайд" що й для решти фаз). Ключові рішення:
+  парсинг на бекенді (`xlrd==2.0.1` для legacy ЄСП/ОПТ `.xls`,
+  стандартний `csv` для РУБІН cp1251); перезаливка автоматично за
+  датами з файлу в одній транзакції; незнайдений
+  Customer/Store — автостворення із синтетичними ID (900 000 000+),
+  Product завжди має реальний 1С-артикул (єдиний довідник, Q1);
+  `total_uah` для ЄСП/ОПТ = `СуммаВх` (собівартість, не роздрібна
+  `СуммаР`) — свідомо зафіксований побічний ефект: аналітика "% від
+  продажу" для цього каналу рахуватиме "% від собівартості",
+  `calcTransportCost.ts` не чіпали. Новий ендпоінт
+  `POST /api/waybill-records/import_file/` на вже існуючому
+  `WaybillRecordViewSet`. Заразом закрито реальну діру в правах —
+  `WaybillRecordViewSet` досі не мав `permission_classes` узагалі
+  (писати міг будь-який залогинений, включно з водієм); для CRUD-запису
+  й `import_file` заведено НОВИЙ клас `IsManagerOrHeadOnly`
+  (`apps/accounts/permissions.py`) замість наявного `IsManagerOrHead`
+  — той навмисно впускає й `logist` (лишено заради `Car.change_status`
+  і `CarrierShipment`/`CarrierCost` з Фази 11), а бізнес-процес імпорту
+  (§1 спеку — "менеджер-операціоніст в офісі") explicitly logist не
+  включає. Синхронізовано з фронтендом: `vehicle_cost_tracker/
+  CODING_GUIDE.md` вже мав чорновий `# ФАЗА 22` (Кроки 22.1-22.8,
+  написаний наперед за планом `woolly-dancing-hopcroft.md`) — ендпоінт
+  і форма відповіді збіглись 1-в-1, підправлено тільки Крок 22.1 під
+  реальну назву permission-класу. **Ще не перевірено на реальному
+  оновленому ЄСП/ОПТ-зразку** — Q2 вимагає нової колонки `name_store`
+  (додає ІТ), якої немає в наявному
+  `task_description/file_1C/Переміщення зі складів на АЗС.xls`; перший
+  реальний оновлений файл або підтвердить `EXPECTED_HEADER` у
+  `esp_opt_xls.py`, або впаде з `HeaderMismatchError` — це очікувано,
+  не баг.
 
 ## Наступні кроки
 
+- Набрати руками код `Фази 12` (`apps/waybills/importers/`,
+  `matching.py`, `importing.py`, оновлений `views.py`,
+  `IsManagerOrHeadOnly` у `apps/accounts/permissions.py`,
+  `xlrd==2.0.1` у `requirements.txt`) за щойно дописаним `Кроком
+  16.1-16.8` у `DJANGO_CODING_GUIDE.md` — сам код ще не набраний.
+- Отримати від ІТ оновлений ЄСП/ОПТ `.xls`-зразок із доданою колонкою
+  `name_store` (Q2) — без нього Крок 16.8 п.3 (перевірка на реальному
+  файлі) неможливо пройти до кінця, лише перевірити, що
+  `HeaderMismatchError` коректно ловить розбіжність.
 - Перевірити інші таблиці на той самий розсинхрон sequence/MAX(id), що
   щойно знайшли в `drivers`/`cars` (інцидент №2 вище) — перевірено
   вибірково лише 4 таблиці (`auth_user`, `profiles`, `drivers`, `cars`),
@@ -147,20 +268,22 @@ Backend (`vehicle_tracker_api`, Django/DRF) розгорнутий на Raspberr
   `vehicle_cost_tracker` — звірити, що маршрут `/driver-app` і
   `src/api/cars.ts` не зникли знову (вже двічі губили, див.
   `TELEGRAM_BOT_SETUP.md` і коментар `⚠️ НЕ ВИДАЛЯТИ` в `App.tsx`).
-- Набрати руками код `Фази 11` (`DJANGO_CODING_GUIDE.md`, Крок 15.1-15.6):
-  моделі `HiredTransportTrip`/`HiredTripWaybill` (найманий транспорт,
-  логіст) і `CarrierShipment`/`CarrierShipmentWaybill`/`CarrierCost`
-  (служби доставки, менеджер-операціоніст) в `apps/logistics` —
-  досі порожній застосунок. Після цього розкоментувати
-  `path("api/", include("apps.logistics.urls"))` у `config/urls.py`.
+- ~~Набрати руками код `Фази 11`~~ — зроблено 19.08 (моделі, admin,
+  serializers, views, urls; `config/urls.py` підключено; всі баги з
+  рев'ю виправлено, `manage.py check`/`runserver` чисті). Не
+  перевірено ще: реальний `POST`/`attach_waybill`/матчинг по ТТН від
+  залогиненого користувача (поки що тестували лише анонімний `GET`
+  → `403`) — варто прогнати хоча б раз через залогинену сесію
+  (Django Admin session або DRF browsable API), перш ніж вважати
+  Фазу 11 остаточно готовою.
 - `apps/analytics` лишається порожнім навмисно — це `Sum()`/`annotate()`
   над уже наявними даними, писати варіант має сенс під конкретні
   дашборди фронтенду, коли в БД накопичиться реальна історія
   (пов'язано з Кроком 14 нижче).
-- Крок 11 (`DJANGO_CODING_GUIDE.md`, "Що далі") — management command
-  імпорту з 1С — це чистий бекенд (`python manage.py import_from_1c`),
-  React UI під нього не потрібен, можна писати вже зараз незалежно
-  від фронтенду.
+- ~~Крок 11 — management command імпорту з 1С~~ — застаріло: замість
+  CLI-команди зробили upload-ендпоінт + форму на фронтенді (менеджер
+  сам вивантажує файл щотижня, §1 `IMPORT_1C_SPEC.md`). Гайд написано
+  як `Фазу 12` (Кроки 16.1-16.8) 2026-08-30, деталі — у записі вище.
 - Крок 14 (підключення `products`/`customers`/`waybills` до реального
   React) — дійсно залежить від фронтенду: `vehicle_cost_tracker` вже
   має `USE_MOCK`-перемикач у `src/api/waybills.ts`, але тільки для
