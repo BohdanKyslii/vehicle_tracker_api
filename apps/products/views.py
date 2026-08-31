@@ -1,8 +1,12 @@
 from rest_framework import viewsets, filters
-from unicodedata import category
+from rest_framework.permissions import IsAuthenticated
+
+from apps.accounts.permissions import IsManagerOrHead
 
 from .models import Product, ProductCategory
 from .serializers import ProductSerializer, ProductCategorySerializer
+
+WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 
 class ProductCategoryViewSet(viewsets.ModelViewSet):
     """CRUD для категорій товарів (з ієрархією parent/children)."""
@@ -20,8 +24,14 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
             qs = qs.filter(parent_isnull=True)
         return qs
 
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — довідникові дані, /panel (head)."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]
+
 class ProductViewSet(viewsets.ModelViewSet):
-    """CRUD для товарів. Логістика — вкладено (read_only) через ProductSerializer."""
+    """CRUD для товарів, разом із вкладеною логістикою (вага/габарити)."""
 
     queryset = Product.objects.select_related("category", "logistics").all()
     serializer_class = ProductSerializer
@@ -40,3 +50,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         if is_active is not None:
             qs = qs.filter(is_active=is_active == "true")
         return qs
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — довідникові дані, /panel (head)."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHead()]
+        return [IsAuthenticated()]

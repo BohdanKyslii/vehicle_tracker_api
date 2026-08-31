@@ -53,5 +53,5 @@ class CustomerSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-        def get_stores_count(self, obj) -> int:
-            return obj.store.count()
+    def get_stores_count(self, obj) -> int:
+        return obj.stores.count()

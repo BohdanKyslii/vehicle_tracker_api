@@ -1,7 +1,15 @@
 # Vehicle Cost Tracker — Загальний опис проєкту
 
-> Документ для review сеньйором. Мета — підтвердити архітектуру,
-> уточнити бізнес-логіку та погодити технічний стек перед стартом розробки.
+> Початково — документ для review сеньйором перед стартом розробки.
+> **Оновлено 2026-08-24**: бекенд (Django+DRF) і суттєва частина
+> фронтенду вже написані й задеплоєні на прод (Raspberry Pi,
+> `warehouse.mom`) — цей файл більше не чисто плановий, а звірений з
+> реальним кодом. Розділи 1-8 (бізнес-логіка) описують те, що вже
+> реалізовано і працює, якщо не зазначено інше. Детальний технічний
+> контракт БД — `02_DATABASE_SCHEMA.md`, покроковий процес розробки —
+> `vehicle_tracker_api/DJANGO_CODING_GUIDE.md` (бекенд) і
+> `vehicle_cost_tracker/CODING_GUIDE.md` (фронтенд), поточний прогрес —
+> `vehicle_tracker_api/task_description/STATE.md`.
 
 ---
 
@@ -207,36 +215,57 @@
 
 ### 5.5 Реєстр накладних (від менеджера, щотижня)
 
-Файл CSV / Excel із 1С. Містить відвантаження та повернення (від'ємна кількість).
-Три юридичні особи: **ESP**, **OPT**, **Rubin**.
+Файл CSV / Excel із 1С, вручну завантажується менеджером-операціоністом
+на сторінці сайту (`/waybills/import`, поки заглушка — див. Крок 11 в
+`DJANGO_CODING_GUIDE.md` і `IMPORT_1C_SPEC.md`). Містить відвантаження
+та повернення. Три юридичні особи, **кожна зі своїм форматом
+вивантаження** (з'ясовано 2026-08-20 при дослідженні реальних файлів,
+див. `task_description/IMPORT_1C_SPEC.md` — там же лишається блок
+відкритих питань, ще не підтверджений користувачем):
 
-| Поле в 1С | Тип | Примітка |
+| Юрособа | Формат файлу | Особливості |
+|---------|-------------|-------------|
+| **Rubin** | `.csv` (`cp1251`, `;`) | Класичний реєстр продажів: клієнт, адреса магазину текстом, `product_articl` (спільний артикул) + `product_id` (внутрішній ID РУБІН) окремо |
+| **ESP** | `.xls` (legacy BIFF) | "Переміщення зі складів на АЗС": колонка `Магазин` = склад/точка призначення (сама і є "клієнтом" каналу, окремого поля клієнта нема), `Категория` = бренд/категорія товару (НЕ клієнт), `Код` = той самий спільний артикул |
+| **OPT** | `.xls`, та сама структура що ЄСП | За словами користувача — ~8 реальних АЗС замість 2 складів у `Магазин` |
+
+Поля нижче — узагальнена модель, у яку зводяться обидва формати
+(`WaybillRecord`, вже реалізовано в `apps/waybills`):
+
+| Поле в БД (`waybill_records`) | Тип (реальний, Django) | Примітка |
 |-----------|-----|---------|
-| `legal_entity` | `VARCHAR(10)` | ESP / OPT / Rubin |
-| `waybill_date` | `DATE` | Дата накладної |
-| `waybill_number` | `VARCHAR(50)` | Номер накладної |
-| `customer_id` | `VARCHAR(50)` | ID клієнта |
-| `store_id` | `VARCHAR(50)` | ID торгової точки (магазину) |
-| `product_id` | `VARCHAR(50)` | Артикул товару |
-| `quantity` | `NUMERIC` | **+** відвантаження; **−** повернення |
-| `price_uah` | `NUMERIC` | Ціна за одиницю |
-| `total_uah` | `NUMERIC` | Сума рядка |
-| `line_position` | `SMALLINT` | Номер позиції в накладній |
-| `comment` | `TEXT` | Для повернень — номер накладної клієнта |
+| `legal_entity` | `CharField(10)`, choices | ESP / OPT / Rubin — визначається файлом, який обрав менеджер, не колонкою всередині файлу |
+| `waybill_date` | `DateField` | Дата накладної |
+| `waybill_number` | `CharField(50)` | Номер накладної |
+| `customer` | `ForeignKey → customers.id_customer (IntegerField PK)` | Для ESP/OPT поки немає прямого відповідника в файлі (див. `IMPORT_1C_SPEC.md` Q2) |
+| `store` | `ForeignKey → stores.id_store (IntegerField PK)` | Для Rubin у файлі лише текст адреси, не ID — потребує matching/створення `Store` при імпорті |
+| `product` | `ForeignKey → products.id_product (IntegerField PK)` | **Важливо**: артикул — число (`IntegerField`), не `VARCHAR`, як вважалось раніше |
+| `quantity` | `DecimalField` | **+** відвантаження; **−** повернення (підтверджено для Rubin; для ESP/OPT — від'ємних рядків у зразку файлу не знайдено, статус з'ясовується) |
+| `price_uah` | `DecimalField` | Ціна за одиницю |
+| `total_uah` | `DecimalField` | Сума рядка — для ESP/OPT ще не ясно, яке з полів джерела (`СуммаР` роздрібна чи `СуммаВх` закупівельна) сюди йде |
+| `line_position` | `SmallIntegerField` | Номер позиції в накладній |
+| `comment` | `TextField` | Для повернень — номер накладної клієнта |
 
-**Унікальний ключ рядка:** `waybill_number + line_position`
+**Унікальний ключ рядка:** `waybill_number + line_position`.
 
 ---
 
 ## 6. Довідники
 
+> **Уточнено 2026-08-24:** первинні ключі `products`/`customers`/`stores`,
+> що приходять із 1С, у реальній реалізації — `IntegerField` (число), не
+> `VARCHAR`, як планувалось спочатку. Артикул/ID у 1С хоч і виглядає як
+> рядок (`"000000143"`), Django-модель зберігає його як ціле число.
+
 ### 6.1 Довідник товарів (`products`)
 
 | Поле | Тип | Опис |
 |------|-----|------|
-| `id_product` | `VARCHAR PK` | Артикул із 1С |
+| `id_product` | `IntegerField PK` | Артикул із 1С |
 | `name_product` | `VARCHAR` | Назва товару |
-| `id_category` | `INTEGER FK` | → `product_categories` |
+| `category` | `FK → product_categories`, `default=15` | Категорія (default — категорія "Інше") |
+| `description` | `TEXT` | Опис товару |
+| `is_active` | `BOOLEAN` | |
 
 ### 6.2 Довідник логістичних даних товарів (`product_logistics`)
 
@@ -255,18 +284,24 @@
 
 ### 6.3 Довідник категорій товарів (`product_categories`)
 
+Реалізовано з ієрархією (не було в первинному плані): категорія може
+мати батьківську категорію (`parent`, self-FK, `on_delete=SET_NULL`).
+
 | Поле | Тип | Опис |
 |------|-----|------|
-| `id_category` | `INTEGER PK` | ID категорії |
-| `name_category` | `VARCHAR` | Назва категорії |
+| `id_category` | `INTEGER PK` (`SERIAL`) | ID категорії |
+| `name_category` | `VARCHAR`, `unique=True` | Назва категорії |
+| `parent` | `FK → self`, nullable | Батьківська категорія; `NULL` = коренева |
+| `description` | `TEXT` | |
 
 ### 6.4 Довідник клієнтів (`customers`)
 
 | Поле | Тип | Опис |
 |------|-----|------|
-| `id_customer` | `VARCHAR PK` | ID клієнта із 1С |
+| `id_customer` | `IntegerField PK` | ID клієнта із 1С |
 | `name_customer` | `VARCHAR` | Назва клієнта |
-| `network_customer` | `VARCHAR` | Напрямок діяльності |
+| `network_customer` | `VARCHAR` | Напрямок діяльності (Роздріб/Мережа/HoReCa) |
+| `is_active` | `BOOLEAN` | |
 
 ### 6.5 Довідник магазинів / торгових точок (`stores`)
 
@@ -275,10 +310,11 @@
 
 | Поле | Тип | Опис |
 |------|-----|------|
-| `id_store` | `VARCHAR PK` | ID магазину із 1С |
-| `id_customer` | `VARCHAR FK` | → `customers` |
+| `id_store` | `IntegerField PK` | ID магазину із 1С |
+| `customer` | `FK → customers`, `on_delete=RESTRICT` | Не можна видалити клієнта, поки є магазини |
 | `name_store` | `VARCHAR` | Назва магазину |
 | `store_address` | `VARCHAR` | Юридична / основна адреса |
+| `is_active` | `BOOLEAN` | |
 
 **Додаткові адреси доставки** — окрема таблиця `store_delivery_addresses`:
 
@@ -294,29 +330,45 @@
 
 | Поле | Тип | Опис |
 |------|-----|------|
-| `id_car` | `SERIAL PK` | ID авто |
+| `id` | `SERIAL PK` | ID авто (стандартний Django `id`, не `id_car`) |
 | `name_car` | `VARCHAR` | Назва / марка + модель |
-| `number_car` | `VARCHAR` | Державний номер |
+| `number_car` | `VARCHAR`, `unique=True` | Державний номер |
+| `fuel_card_number` | `BigIntegerField`, nullable | Номер паливної карти (не було в первинному плані) |
 | `amount_car` | `NUMERIC` | Амортизація (грн/міс) — стала величина |
 | `default_tracking_mode` | `VARCHAR(10)` | `daily` / `full` — дефолт від логіста |
 | `status_car` | `VARCHAR(20)` | `active` / `repair` / `inactive` |
 | `is_active` | `BOOLEAN` | Активне чи архівне |
 
+**Пов'язані таблиці, яких не було в первинному плані** (реалізовано в
+Фазі 3.5/5.1 `DJANGO_CODING_GUIDE.md`):
+- `car_specs` (1:1 з `cars`) — VIN, рік випуску, маса, вантажопідйомність,
+  габарити, `has_tail_lift` (гідроборт), `has_trailer`.
+- `trailers` (1:1 з `cars`, тільки якщо `has_trailer=True`) — причіп:
+  назва, VIN, модель, номерний знак, рік випуску.
+- `car_status_logs` — журнал зміни статусів авто (для підрахунку днів
+  у ремонті за місяць): статус, причина, хто змінив, коли.
+
 ### 6.7 Довідник водіїв (`drivers`)
 
 | Поле | Тип | Опис |
 |------|-----|------|
-| `id_driver` | `SERIAL PK` | ID водія |
+| `id` | `SERIAL PK` | ID водія |
 | `name_driver` | `VARCHAR` | ПІБ водія |
 | `phone` | `VARCHAR` | Телефон |
-| `id_car` | `INTEGER FK` | → `cars` (поточне закріплене авто) |
+| `drivers_license` | `VARCHAR`, blank | Номер посвідчення водія (не було в первинному плані — додано разом із Telegram-реєстрацією, Крок 16.08) |
+| `car` | `OneToOneField → cars`, nullable | Поточне закріплене авто (саме 1:1, не просто FK — одне авто = один активний водій одночасно) |
 | `is_active` | `BOOLEAN` | Активний чи архівний |
+
+**Зв'язок із авторизацією:** `Driver` не має власного логіну — Telegram-
+акаунт водія лінкується через `apps.accounts.Profile.driver`
+(`OneToOneField`, nullable). Детально — `TELEGRAM_BOT_SETUP.md`.
 
 ---
 
 ## 7. Зв'язки між таблицями
 
 ```
+product_categories    (1) ──< (N) product_categories    [self, parent/children]
 product_categories    (1) ──< (N) products
 products              (1) ──< (1) product_logistics
 products              (1) ──< (N) waybill_records
@@ -324,16 +376,21 @@ customers             (1) ──< (N) stores
 stores                (1) ──< (N) store_delivery_addresses
 stores                (1) ──< (N) waybill_records       [через store_id]
 customers             (1) ──< (N) waybill_records
+cars                  (1) ──< (1) car_specs
+cars                  (1) ──< (1) trailers               [лише якщо car_specs.has_trailer]
+cars                  (1) ──< (N) car_status_logs
 cars                  (1) ──< (N) route_events
 cars                  (1) ──< (N) monthly_costs
-cars                  (1) ──< (1) drivers               [поточне закріплення]
+cars                  (1) ──< (1) drivers               [поточне закріплення, OneToOne]
 drivers               (1) ──< (N) route_events
+drivers               (1) ──< (1) profiles               [Telegram/веб-акаунт водія]
 route_events          (N) >── (1) waybill_records        [через waybill_number]
 
 ── Канали доставки (ексклюзивні) ─────────────────────────
 waybill_records.delivery_channel = 'own' | 'hired' | 'carrier'
-hired_transport_trips (1) ──< (N) hired_trip_waybills   [накладні найманого]
-carrier_shipments     (1) ──< (N) carrier_costs         [витрати служб доставки]
+hired_transport_trips (1) ──< (N) hired_trip_waybills    [накладні найманого]
+carrier_shipments     (1) ──< (N) carrier_shipment_waybills
+carrier_shipments     (1) ──< (N) carrier_costs          [матчинг по ttn]
 ```
 
 ---
@@ -370,7 +427,7 @@ carrier_shipments     (1) ──< (N) carrier_costs         [витрати сл
 
 ## 9. Технічний стек
 
-### Frontend
+### Frontend (реалізовано)
 
 | Бібліотека | Призначення |
 |-----------|-------------|
@@ -378,43 +435,65 @@ carrier_shipments     (1) ──< (N) carrier_costs         [витрати сл
 | React Router v6 | Маршрутизація |
 | TanStack Query v5 | Server state, loading/error/cache |
 | Tailwind CSS | Стилізація |
-| Recharts | Графіки та дашборди |
-| `html5-qrcode` | Сканер QR-кодів накладних |
-| PapaParse | Парсинг CSV із 1С та реєстрів служб доставки |
-| Vite | Build tool |
-| `vite-plugin-pwa` | PWA (installable, offline) |
+| Recharts | Графіки та дашборди (ще не використано — Фаза 14 фронтенду не набрана) |
+| `html5-qrcode` | Сканер QR-кодів накладних (Фаза 15 фронтенду — ще не набрана) |
+| PapaParse | Парсинг CSV (заплановано для Крок 11 — імпорт із 1С) |
+| Vite + `vite-plugin-pwa` | Build tool, PWA (installable, offline) |
 
-### Backend (майбутній, поза scope MVP)
+### Backend (реалізовано й задеплоєно — вже НЕ "майбутній поза MVP")
 
 | Компонент | Технологія |
 |-----------|-----------|
 | Framework | Django + DRF |
-| Database | PostgreSQL |
-| Auth | JWT |
-| Containerization | Docker + Docker Compose |
-
-### MVP (поточний scope)
-- React SPA з mock JSON (імітація API через `fetch`)
-- Уся бізнес-логіка розрахунків — у `utils/`
-- PWA для мобільного доступу водія
+| Database | PostgreSQL (той самий хост, що й `local dev` — див. `STATE.md`) |
+| **Auth** | **Session + CSRF cookie** (не JWT, як планувалось спочатку — свідоме рішення, Крок 4.5.1 `DJANGO_CODING_GUIDE.md`) |
+| Containerization | Docker + Docker Compose, `network_mode: host` |
+| CI/CD | GitHub Actions → SSH через Cloudflare Tunnel → `git pull` + `docker compose build/up` на Raspberry Pi |
+| Бот | `aiogram` (Telegram) — реєстрація водіїв, підтвердження ролі, Mini App логін. `TELEGRAM_BOT_SETUP.md` |
 
 ---
 
-## 10. Питання для сеньйора
+## 10. Питання для сеньйора — стан на 2026-08-24
 
-1. **Розподіл місячних витрат по накладних** — пропорційно до суми продажу,
-   ваги, кількості палет? Або комбінований коефіцієнт?
-2. **Прив'язка накладної до авто** — через QR від водія чи через реєстр 1С?
-   Що є пріоритетом при конфлікті?
-3. **Одометр** — довіряємо водію чи потрібна валідація (GPS, фото)?
-4. **Імпорт із 1С** — CSV вручну або планується API / автоматична синхронізація?
-5. **Права доступу** — чи потрібна авторизація в MVP, чи достатньо url-based?
-6. **Зміна режиму водієм** — чи фіксувати в журналі?
-7. **Матчинг повернень** — окремий UI або тільки Excel?
-8. **Адміністрування довідників** — окремий розділ або пряме редагування БД?
-9. **Юридична особа в аналітиці** — окремо по ESP / OPT / Rubin чи зведено?
-10. **Ексклюзивність каналів** — як технічно блокувати дублювання накладних
-    між каналами? Constraint на рівні БД або тільки валідація на UI?
-11. **Служби доставки** — чи є єдиний формат реєстру витрат від НП і Міст Експрес,
-    чи потрібен окремий парсер для кожного?
-12. **Палети** — кількість палет на рейс чи на точку вивантаження (у `full` режимі)?
+Більшість питань уже вирішено фактичною реалізацією. Позначки:
+✅ вирішено (як саме) / 🔄 частково / ❓ досі відкрито.
+
+1. ❓ **Розподіл місячних витрат по накладних** — реалізовано пропорційно
+   до суми продажу (`transport_cost_per_waybill`, `02_DATABASE_SCHEMA.md`);
+   альтернативи (вага/палети/комбінований коефіцієнт) не розглядались.
+2. 🔄 **Прив'язка накладної до авто** — через QR від водія
+   (`RouteEvent.waybill_number`) + `WaybillRecord.delivery_channel`
+   виставляється явним `assign_channel`/`attach_waybill` викликом, не
+   автоматичним матчингом. Конфлікт (накладна вже в іншому каналі) —
+   блокується на рівні API (400), не БД-constraint (див. п.10 нижче).
+3. ❓ **Одометр** — досі просто довіряємо водію, ніякої валідації
+   (GPS/фото) не додано.
+4. ✅ **Імпорт із 1С** — CSV/Excel, завантажується вручну менеджером на
+   сторінці сайту (не API/автосинхронізація). Детальний формат обох
+   типів файлів (Rubin CSV, ESP/OPT XLS) — `IMPORT_1C_SPEC.md`
+   (дослідження завершено 2026-08-20, частина деталей ще уточнюється).
+5. ✅ **Права доступу** — реалізовано: сесійна авторизація +
+   `IsAuthenticated` за замовчуванням (Крок 9.1) + рольові permission-
+   класи `IsManagerOrHead`/`IsLogistOrAbove` (Крок 9.2, 4.5.8).
+6. ❓ **Зміна режиму водієм** — `RouteEvent.tracking_mode` фіксує режим
+   кожної події, але окремого "журналу зміни режиму" немає.
+7. ❓ **Матчинг повернень** — досі не реалізовано (окремий UI не
+   написаний, Excel-варіант теж).
+8. 🔄 **Адміністрування довідників** — Django Admin (`admin.py` в кожному
+   застосунку) уже покриває CRUD для всіх довідників; окремого SPA-
+   розділу в React ще нема (Фаза 16 фронтенду не набрана).
+9. ❓ **Юридична особа в аналітиці** — `apps.analytics` ще не написаний
+   (свідомо відкладено до накопичення реальних даних).
+10. ✅ **Ексклюзивність каналів** — **валідація на рівні API**, не
+    БД-constraint: `unique=True` на `waybill_number` у таблицях-
+    прив'язках (`hired_trip_waybills`, `carrier_shipment_waybills`) +
+    явна перевірка `delivery_channel` перед призначенням
+    (`WaybillRecordViewSet.assign_channel`,
+    `HiredTransportTripViewSet.attach_waybill`,
+    `CarrierShipmentViewSet.attach_waybill`).
+11. ❓ **Служби доставки** — `apps.logistics.CarrierCost` реалізований як
+    один узагальнений формат (ttn, вага, вартість, дата); чи потрібен
+    окремий парсер під формат конкретно НП/Міст Експрес — не з'ясовано,
+    імпорт-ендпоінт для цього ще не написаний.
+12. ✅ **Палети** — реалізовано за задумом: `pallets_count` на
+    `depot_start` (daily) або на кожній `delivery` (full).
