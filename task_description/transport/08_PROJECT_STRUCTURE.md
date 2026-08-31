@@ -1,235 +1,157 @@
-# Vehicle Cost Tracker — Структура файлів проєкту (v3)
+# Vehicle Cost Tracker — Структура файлів проєкту
+
+> **Оновлено 2026-08-24.** Первинна версія описувала тільки фронтенд
+> (`vehicle-tracker/`) як єдиний майбутній React SPA. Реально проєкт —
+> **два окремі репозиторії** (`[[project_vehicle_cost_tracker_split]]`
+> у пам'яті агента, якщо працюєш через Claude Code):
+> `vehicle_tracker_api` (Django backend) і `vehicle_cost_tracker`
+> (React frontend), кожен зі своїм деплоєм на той самий Raspberry Pi.
+> Нижче — реальне дерево обох, не аспіраційне.
 
 ---
 
-## Повне дерево файлів
+## Backend — `vehicle_tracker_api/`
 
 ```
-vehicle-tracker/
+vehicle_tracker_api/
 │
-├── public/
-│   ├── favicon.ico
-│   └── icons/                              # PWA іконки (192×192, 512×512)
+├── apps/
+│   ├── accounts/            # Авторизація, ролі, Telegram-бот
+│   │   ├── models.py        # Profile (role/phone/telegram_id/driver)
+│   │   ├── views.py         # /api/auth/* (csrf, login, register, logout, telegram)
+│   │   ├── permissions.py   # HasRole, IsManagerOrHead, IsLogistOrAbove
+│   │   ├── bot.py           # aiogram: реєстрація, підтвердження ролі, призначення авто
+│   │   ├── telegram_auth.py     # verify_init_data() — HMAC перевірка Mini App
+│   │   ├── telegram_notify.py   # синхронний виклик Telegram API (для веб-реєстрації)
+│   │   ├── notifications.py     # notify_admin_new_registration()
+│   │   └── management/commands/run_bot.py
+│   ├── cars/                 # Car, CarSpecs, Trailer, CarStatusLog, Driver, RouteEvent, MonthlyCosts
+│   ├── products/             # Product, ProductCategory, ProductLogistics
+│   ├── customers/            # Customer, Store, StoreDeliveryAddress
+│   ├── waybills/             # WaybillRecord
+│   ├── logistics/            # HiredTransportTrip/HiredTripWaybill, CarrierShipment/CarrierShipmentWaybill/CarrierCost
+│   └── analytics/            # ⏳ порожній — models.py/views.py лише заглушки, свідомо
+│
+├── config/
+│   ├── settings.py           # REST_FRAMEWORK, TELEGRAM_*, DB, INSTALLED_APPS
+│   ├── urls.py                # підключення apps.*.urls
+│   ├── asgi.py / wsgi.py
+│
+├── task_description/          # Уся документація й контекст (цей файл — тут)
+│   ├── transport/              # ← ти зараз тут: специфікація ЦЬОГО проєкту
+│   ├── warehouse/               # НЕ цей проєкт — окремий, непов'язаний Django-застосунок
+│   ├── file_1C/                 # Реальні вивантаження з 1С для дослідження імпорту
+│   ├── IMPORT_1C_SPEC.md        # Дослідження форматів + відкриті питання (Крок 11)
+│   ├── STATE.md                 # Поточний стан, оновлюється щосесії
+│   ├── CLAUDE.md / AGENTS_GLOBAL.md / AI_AGENT_CONTEXT.md / TASK.md
+│
+├── DJANGO_CODING_GUIDE.md     # Покроковий гайд для ручного набору бекенду (Фаза 1-11)
+├── TELEGRAM_BOT_SETUP.md      # Архітектура й розгортання бота
+├── docker-compose.yml         # сервіси api + bot, network_mode: host
+├── Dockerfile
+├── requirements.txt / pyproject.toml / uv.lock
+├── manage.py
+└── .github/workflows/deploy.yml   # CI/CD: git pull + docker compose build/up на Pi
+```
+
+---
+
+## Frontend — `vehicle_cost_tracker/`
+
+```
+vehicle_cost_tracker/
 │
 ├── src/
+│   ├── types/index.ts          # Всі TypeScript інтерфейси (03_TYPESCRIPT_TYPES.md — дзеркало)
 │   │
-│   ├── types/
-│   │   └── index.ts                        # Всі TypeScript інтерфейси
-│   │                                       # DeliveryChannel, CarStatus
-│   │                                       # Car, Driver, Store, StoreDeliveryAddress
-│   │                                       # HiredTransportTrip, CarrierShipment...
+│   ├── mocks/                  # ЛИШЕ 4 файли (07_MOCK_DATA.md для повного списку відсутнього)
+│   │   ├── cars.json
+│   │   ├── drivers.json
+│   │   ├── route-events.json
+│   │   └── waybills.json
 │   │
-│   ├── mocks/
-│   │   ├── cars.json                       # 3 авто (amountCar, statusCar, defaultTrackingMode)
-│   │   ├── drivers.json                    # 3 водії → прив'язані до cars
-│   │   ├── product-categories.json
-│   │   ├── products.json
-│   │   ├── product-logistics.json
-│   │   ├── customers.json
-│   │   ├── stores.json                     # 5 магазинів → прив'язані до customers
-│   │   ├── store-delivery-addresses.json   # додаткові адреси
-│   │   ├── route-events.json               # з palletsCount
-│   │   ├── waybills.json                   # deliveryChannel: own/hired/carrier/null
-│   │   │                                   # storeId у кожному рядку
-│   │   ├── monthly-costs.json              # carId замість vehicleId
-│   │   ├── hired-trips.json
-│   │   ├── hired-trip-waybills.json
-│   │   ├── carrier-shipments.json
-│   │   ├── carrier-waybills.json
-│   │   └── carrier-costs.json
-│   │
-│   ├── api/
-│   │   ├── config.ts
-│   │   ├── cars.ts
-│   │   ├── drivers.ts
-│   │   ├── routeEvents.ts
-│   │   ├── waybills.ts                     # + checkWaybillChannel, fetchUnassigned
-│   │   ├── stores.ts
-│   │   ├── products.ts
-│   │   ├── customers.ts
-│   │   ├── hiredTransport.ts               # новий
-│   │   ├── carriers.ts                     # новий
-│   │   ├── monthlyCosts.ts
-│   │   └── analytics.ts                    # + fetchChannelComparison
-│   │
-│   ├── hooks/
+│   ├── api/                    # 6 файлів: config, auth, cars, drivers, routeEvents, waybills
+│   ├── hocks/                  # ⚠️ так, "hocks" не "hooks" — реальна назва папки в коді
+│   │   ├── useAuthModal.ts
 │   │   ├── useCars.ts
-│   │   ├── useCurrentDriver.ts
+│   │   ├── useCurrentUser.ts
+│   │   ├── useDayMode.ts
+│   │   ├── useDrivers.ts
 │   │   ├── useRouteEvents.ts
-│   │   ├── useDayMode.ts                   # localStorage (ключ: dayMode:{carId}:{date})
-│   │   ├── useWaybills.ts                  # + useUnassignedWaybills
-│   │   ├── useWaybillFilters.ts            # + deliveryChannel, storeId
-│   │   ├── useWaybillChannelGuard.ts       # новий — перевірка ексклюзивності
-│   │   ├── useDailySummary.ts
-│   │   ├── useHiredTransport.ts            # новий
-│   │   ├── useCarriers.ts                  # новий
-│   │   ├── useMonthlyCosts.ts
-│   │   └── useTransportCosts.ts            # + useChannelComparison
-│   │
-│   ├── utils/
-│   │   ├── formatters.ts                   # + channelLabel()
-│   │   ├── eventHelpers.ts                 # + requiresPallets()
-│   │   ├── calcSummary.ts                  # + calcTotalPallets()
-│   │   ├── calcProduct.ts
-│   │   ├── calcTransportCost.ts            # + allocateHiredTripCost()
-│   │   ├── parseQR.ts
-│   │   ├── parseCsv.ts                     # + parseCsvToCarrierCosts()
-│   │   └── clientFilter.ts                 # filterWaybills + deliveryChannel + storeId
+│   │   ├── useWaybillFilters.ts
+│   │   └── useWaybills.ts
+│   ├── utils/                  # calcProduct, calcSummary, calcTransportCost, clientFilter,
+│   │                           # eventHelpers, formatters, parseQR — 7 файлів
 │   │
 │   ├── components/
-│   │   │
-│   │   ├── ui/
-│   │   │   ├── Button.tsx
-│   │   │   ├── Badge.tsx
-│   │   │   ├── LegalEntityBadge.tsx
-│   │   │   ├── ChannelBadge.tsx            # own/hired/carrier/⚠️null
-│   │   │   ├── CarStatusBadge.tsx          # active/repair/inactive
-│   │   │   ├── Spinner.tsx
-│   │   │   ├── SkeletonRow.tsx
-│   │   │   ├── EmptyState.tsx
-│   │   │   ├── ErrorBanner.tsx
-│   │   │   ├── Pagination.tsx
-│   │   │   ├── SortHeader.tsx
-│   │   │   ├── Modal.tsx
-│   │   │   ├── Input.tsx
-│   │   │   ├── Select.tsx
-│   │   │   ├── Textarea.tsx
-│   │   │   ├── DatePicker.tsx
-│   │   │   ├── MonthPicker.tsx
-│   │   │   └── Toast.tsx
-│   │   │
-│   │   ├── layouts/
-│   │   │   ├── DriverLayout.tsx            # мобільний, bottom nav
-│   │   │   └── MainLayout.tsx              # десктоп, sidebar
-│   │   │
-│   │   ├── driver/
-│   │   │   ├── DayModeSwitch.tsx
-│   │   │   ├── RouteTimeline.tsx           # + palletsCount на точках
-│   │   │   ├── EventTypeButtons.tsx
-│   │   │   ├── ScannedWaybillList.tsx      # + storeName у чіпах
-│   │   │   ├── PalletsInput.tsx            # новий — великі кнопки +/−
-│   │   │   ├── StoreConfirmModal.tsx        # новий — підтвердження точки при daily
-│   │   │   ├── RejectionForm.tsx
-│   │   │   ├── ReturnGoodsForm.tsx
-│   │   │   └── ExtraCargoForm.tsx
-│   │   │
-│   │   ├── hired/                          # новий розділ
-│   │   │   ├── HiredTripCard.tsx
-│   │   │   └── HiredWaybillList.tsx
-│   │   │
-│   │   ├── carriers/                       # новий розділ
-│   │   │   ├── CarrierShipmentCard.tsx
-│   │   │   └── CarrierCostStatus.tsx
-│   │   │
-│   │   ├── fleet/
-│   │   │   ├── CarCard.tsx                 # (перейменовано з VehicleCard)
-│   │   │   ├── CarTable.tsx                # + CarStatusBadge + Палети
-│   │   │   ├── DailyCostsChart.tsx
-│   │   │   └── CostBreakdownPie.tsx
-│   │   │
-│   │   ├── waybills/
-│   │   │   ├── WaybillFiltersBar.tsx       # + ChannelFilter + StoreFilter
-│   │   │   ├── WaybillTable.tsx            # + ChannelBadge + Store
-│   │   │   ├── WaybillLineTable.tsx
-│   │   │   ├── CsvPreview.tsx
-│   │   │   ├── ReturnMatchRow.tsx
-│   │   │   └── UnassignedRow.tsx           # новий
-│   │   │
-│   │   └── analytics/
-│   │       ├── KpiCard.tsx
-│   │       ├── MileageLineChart.tsx
-│   │       ├── TransportCostTable.tsx
-│   │       ├── CustomerCostTable.tsx       # + розбивка по каналах
-│   │       └── ChannelComparisonChart.tsx  # новий
+│   │   ├── ui/                 # Badge, Button, EmptyState, ErrorBanner, Input, Pagination,
+│   │   │                       # SortHeader, Spinner, ui.tsx
+│   │   ├── layouts/             # DriverLayout, MainLayout, TopNav
+│   │   ├── auth/                 # AuthModal
+│   │   ├── driver/                # DayModeSwitch, ui.tsx
+│   │   ├── waybills/              # WaybillFiltersBar, WaybillList, WaybillTable
+│   │   ├── fleet/                  # ⏳ порожньо (Фаза 16)
+│   │   ├── hired/                  # ⏳ порожньо (Крок 12 "Що далі")
+│   │   ├── carriers/               # ⏳ порожньо (Крок 13 "Що далі")
+│   │   └── analystics/             # ⏳ порожньо, і назва з друкарською помилкою
+│   │                               # (не "analytics"! звернути увагу при створенні файлів)
 │   │
 │   ├── pages/
-│   │   │
-│   │   ├── driver/
-│   │   │   ├── DriverDashboard.tsx
-│   │   │   ├── EventForm.tsx               # + PalletsInput + StoreConfirmModal
-│   │   │   ├── QRScanner.tsx
-│   │   │   └── DriverHistory.tsx
-│   │   │
-│   │   ├── fleet/
-│   │   │   ├── FleetList.tsx               # + CarStatusBadge + Палети
-│   │   │   ├── CarDetail.tsx               # (перейменовано з VehicleDetail)
-│   │   │   └── CarMonth.tsx
-│   │   │
-│   │   ├── waybills/
-│   │   │   ├── WaybillList.tsx             # + ChannelBadge + StoreFilter
-│   │   │   ├── WaybillDetail.tsx
-│   │   │   ├── WaybillImport.tsx
-│   │   │   ├── ReturnMatchingList.tsx
-│   │   │   └── UnassignedWaybills.tsx      # новий
-│   │   │
-│   │   ├── hired/                          # новий розділ
-│   │   │   ├── HiredTripList.tsx
-│   │   │   ├── HiredTripForm.tsx
-│   │   │   └── HiredTripDetail.tsx
-│   │   │
-│   │   ├── carriers/                       # новий розділ
-│   │   │   ├── CarrierShipmentList.tsx
-│   │   │   ├── CarrierShipmentForm.tsx
-│   │   │   ├── CarrierShipmentDetail.tsx
-│   │   │   └── CarrierCostsImport.tsx
-│   │   │
-│   │   ├── analytics/
-│   │   │   ├── AnalyticsDashboard.tsx
-│   │   │   ├── TransportCosts.tsx
-│   │   │   ├── CustomerAnalytics.tsx       # + розбивка по каналах
-│   │   │   ├── ChannelComparison.tsx       # новий
-│   │   │   └── CarAnalytics.tsx
-│   │   │
-│   │   └── admin/
-│   │       ├── AdminDashboard.tsx
-│   │       ├── CarAdmin.tsx                # (перейменовано з VehicleAdmin)
-│   │       ├── DriverAdmin.tsx
-│   │       ├── ProductAdmin.tsx
-│   │       ├── CustomerAdmin.tsx
-│   │       ├── StoreAdmin.tsx              # новий — + додаткові адреси
-│   │       └── MonthlyCostsAdmin.tsx       # auto-fill з cars.amount_car
+│   │   ├── driver/               # DriverDashboard, EventForm
+│   │   ├── DriverMiniApp.tsx      # Telegram Mini App вхід + редірект за роллю
+│   │   ├── LandingPage.tsx
+│   │   ├── PlaceholderPage.tsx    # універсальна заглушка "в розробці"
+│   │   ├── UnderConstruction.tsx  # старіша заглушка, дублює PlaceholderPage
+│   │   ├── fleet/ hired/ carriers/ analystics/ admin/ waybills/   # ⏳ усі порожні
 │   │
-│   ├── App.tsx
+│   ├── styles/landing.css
+│   ├── App.tsx                   # ⚠️ /driver-app — критичний маршрут, двічі губився при рефакторингу
 │   ├── main.tsx
-│   └── index.css                           # Tailwind + мобільні fix
+│   └── index.css
 │
-├── .env
-├── .env.production
-├── .gitignore
-├── eslint.config.js
-├── index.html
-├── package.json
-├── tsconfig.json
-├── tsconfig.app.json
-└── vite.config.ts
+├── documents/                    # Design-докси ЦЬОГО репозиторію (аналог task_description/transport/
+│   │                              # тут, історично розійшлись — див. нижче)
+│   ├── 01_PROJECT_OVERVIEW.md ... 08_PROJECT_STRUCTURE.md
+│
+├── CODING_GUIDE.md               # Покроковий гайд для ручного набору фронтенду (Фаза 1-16)
+├── Dockerfile / nginx.conf / docker-compose.yml
+├── .env / .env.production        # VITE_USE_MOCK, VITE_API_BASE, VITE_TELEGRAM_BOT_USERNAME
+├── package.json / tsconfig*.json / vite.config.ts
+└── .github/workflows/deploy.yml
 ```
 
----
-
-## Архітектурні рішення (v3)
-
-| Питання | Рішення | Чому |
-|---------|---------|------|
-| Ексклюзивність каналів | `deliveryChannel` в `waybill_records` + `checkWaybillChannel()` перед кожним скануванням | Швидка перевірка без JOIN; constraint на рівні UNIQUE в hired/carrier waybill таблицях |
-| Палети | `palletsCount` в `route_events` | daily: загальна к-сть за день; full: к-сть на точку вивантаження |
-| Магазини | Окрема таблиця `stores` → `store_delivery_addresses` | Один магазин = декілька адрес доставки |
-| `cars` | Перейменовано з `vehicles` → відповідає довіднику `5.6 cars` з overview | |
-| `amount_car` | Зберігається в `cars`, автоматично підставляється в `MonthlyCostsAdmin` | Логіст вводить один раз |
-| Служби доставки | Окрема модель `carrier_shipments` + `carrier_costs` | Реєстри від НП/МЕ мають різну структуру — парсер адаптований |
-| Найманий транспорт | `hired_transport_trips` + вільний ввід номера авто | Немає закріплення до довідника |
-| `StoreConfirmModal` | Тільки для першого QR у daily-режимі | Спрощує сканування коли кілька накладних на одну точку |
+> ⚠️ **Два паралельні набори design-доксів для того самого продукту:**
+> `vehicle_tracker_api/task_description/transport/*.md` (цей файл — тут)
+> і `vehicle_cost_tracker/documents/*.md`. Історично розійшлись
+> (створювались одночасно на старті, потім кожен репозиторій оновлював
+> свою копію окремо, або й зовсім не оновлював). Якщо порівнюєш —
+> `vehicle_cost_tracker/documents/01_PROJECT_OVERVIEW.md` ближчий до
+> актуального бізнес-опису (менше розійшовся), а схема БД/типи повніше
+> й точніше саме тут, у `task_description/transport/`, бо вони звірені
+> з реальним Django-кодом безпосередньо 2026-08-24.
 
 ---
 
-## Правила іменування
+## Спільний хостинг
 
-| Категорія | Конвенція | Приклад |
-|-----------|-----------|---------|
-| Компоненти | PascalCase | `ChannelBadge.tsx`, `PalletsInput.tsx` |
-| Hooks | `use` + PascalCase | `useWaybillChannelGuard.ts` |
-| Utils | camelCase | `calcTransportCost.ts` |
-| Типи | PascalCase | `HiredTransportTrip`, `CarrierCost` |
-| Type aliases | PascalCase | `DeliveryChannel`, `CarStatus` |
-| Mock файли | kebab-case | `hired-trip-waybills.json` |
-| БД таблиці | snake_case | `hired_transport_trips`, `carrier_costs` |
-| Змінні оточення | `VITE_` prefix | `VITE_USE_MOCK` |
+Обидва репозиторії деплояться на **один Raspberry Pi**
+(`rasberry_kisliy@192.168.0.114`, домен `warehouse.mom`),
+`network_mode: host` в обох `docker-compose.yml`. `nginx.conf`
+фронтенду проксіює `/api/`, `/admin/`, `/static/` на бекенд
+(`127.0.0.1:8000`), решту віддає React SPA (`try_files ... /index.html`).
+CI/CD — окремий GitHub Actions workflow в кожному репозиторії, обидва
+йдуть через SSH-тунель Cloudflare (Pi без публічної IP).
+
+---
+
+## Правила іменування (актуальні)
+
+| Категорія | Конвенція | Приклад | Примітка |
+|-----------|-----------|---------|------|
+| Компоненти | PascalCase | `WaybillTable.tsx` | |
+| Hooks | `use` + PascalCase, у папці `hocks/` | `useWaybillFilters.ts` | не `hooks/`! |
+| Utils | camelCase | `calcTransportCost.ts` | |
+| Типи | PascalCase | `HiredTransportTrip` | |
+| Django apps | однина/множина за доменом | `cars`, `waybills`, `logistics` | |
+| Django моделі | PascalCase, `db_table` — snake_case | `WaybillRecord` → `waybill_records` | |
+| Змінні оточення | `VITE_` prefix (frontend), без префіксу (backend `.env`) | `VITE_USE_MOCK`, `TELEGRAM_BOT_TOKEN` | |

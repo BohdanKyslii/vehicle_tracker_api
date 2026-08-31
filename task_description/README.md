@@ -1,6 +1,12 @@
-# Task Description — Vehicle Cost Tracker (v3)
+# Task Description — Vehicle Cost Tracker (v4)
 
 Каталог з документацією та завданнями для розробки проекту **Vehicle Cost Tracker** (система обліку транспортних витрат).
+
+> **Оновлено 2026-08-24.** Раніше цей каталог описував проєкт як
+> React-SPA на mock-даних. Реально є повноцінний Django+DRF бекенд
+> (цей репозиторій, `vehicle_tracker_api`) і React-фронтенд
+> (`vehicle_cost_tracker`) — обидва вже написані частково й задеплоєні
+> на прод. Деталі — `AGENTS_GLOBAL.md` (оновлено того ж дня).
 
 ---
 
@@ -15,10 +21,20 @@ task_description/
 ├── CHANGES.md            # Журнал змін документації
 ├── README.md             # Цей файл
 ├── STATE.md              # 🔄 Стан проекту та останні зміни (для контексту)
-└── transport/            # Детальна специфікація v3 (React PWA)
-    ├── 01_PROJECT_OVERVIEW.md
-    ├── 06_IMPLEMENTATION_PLAN.md
-    └── 08_PROJECT_STRUCTURE.md
+├── IMPORT_1C_SPEC.md     # Дослідження форматів вивантажень з 1С + відкриті питання (Крок 11, у роботі)
+├── file_1C/              # Реальні зразки вивантажень з 1С (для IMPORT_1C_SPEC.md)
+├── transport/            # ⭐ Специфікація ЦЬОГО проєкту (звірена з кодом 2026-08-24)
+│   ├── 01_PROJECT_OVERVIEW.md
+│   ├── 02_DATABASE_SCHEMA.md
+│   ├── 03_TYPESCRIPT_TYPES.md
+│   ├── 04_PAGES_AND_ROUTING.md
+│   ├── 05_COMPONENTS_HOOKS_UTILS.md
+│   ├── 06_IMPLEMENTATION_PLAN.md
+│   ├── 07_MOCK_DATA.md
+│   └── 08_PROJECT_STRUCTURE.md
+└── warehouse/             # ⚠️ НЕ цей проєкт — окремий, непов'язаний Django-застосунок
+                           # (облік складських витрат), заплановане майбутнє доопрацювання,
+                           # коду якого в цьому репозиторії немає. Не плутати з transport/.
 ```
 
 ---
@@ -26,12 +42,17 @@ task_description/
 ## Порядок читання
 
 ```
-1. transport/01_PROJECT_OVERVIEW.md — бізнес-логіка та ролі
-2. AGENTS_GLOBAL.md                — архітектура, патерни, стек
-3. STATE.md                        — що вже зроблено, поточний статус
+1. transport/01_PROJECT_OVERVIEW.md — бізнес-логіка, ролі, поточний стан реалізації
+2. AGENTS_GLOBAL.md                — архітектура, стек (frontend + backend), патерни
+3. STATE.md                        — що вже зроблено, живі інциденти, поточний статус
 4. TASK.md                         — конкретне завдання
 5. AI_AGENT_CONTEXT.md             — технічні деталі (типи, структура)
 ```
+
+Покроковий процес розробки (не дублюється тут) — окремо для кожного
+репозиторію:
+- Бекенд: `DJANGO_CODING_GUIDE.md` (корінь цього репозиторію).
+- Фронтенд: `vehicle_cost_tracker/CODING_GUIDE.md`.
 
 ---
 
@@ -47,27 +68,36 @@ task_description/
 
 ## Проект Vehicle Cost Tracker — коротко
 
-**React 18 + TypeScript + Vite + Tailwind CSS + TanStack Query**
+**Backend:** Django + DRF + PostgreSQL, сесійна авторизація, Telegram-бот (`aiogram`).
+**Frontend:** React 18 + TypeScript + Vite + Tailwind CSS + TanStack Query.
 
-| Компонент | Технологія / Призначення |
-|-----------|--------------------------|
-| **Driver UI** | PWA для водіїв (одометр, паливо, QR накладних) |
-| **Logistics** | Десктоп інтерфейс для логістів (найманий транспорт) |
-| **Analytics** | Дашборди та порівняння каналів доставки |
-| **Data** | Mock JSON (MVP) → в майбутньому Django DRF |
+| Компонент | Технологія / Призначення | Статус |
+|-----------|--------------------------|--------|
+| **Driver UI** | PWA для водіїв (одометр, паливо, QR накладних) | ✅ реалізовано |
+| **Fleet / Logistics** | Автопарк, найманий транспорт, служби доставки | 🔄 бекенд готовий, фронтенд ще ні |
+| **Analytics** | Дашборди та порівняння каналів доставки | ⏳ не розпочато |
+| **Data** | Django DRF API (mock JSON — лише для локальної розробки без бекенду) | ✅ |
 
 **Ключові правила:**
-- Функціональні компоненти (FC) з TypeScript.
-- TanStack Query для роботи з даними (навіть mock).
-- Ексклюзивність каналів (власне авто / найманий / служба).
+- Функціональні компоненти (FC) з TypeScript, суворий режим типізації.
+- TanStack Query для роботи з даними (реальний API за замовчуванням у проді).
+- Ексклюзивність каналів (власне авто / найманий / служба) — на рівні app-логіки DRF.
 - Палети: облік у режимах `daily` та `full`.
 - Мобільна адаптація (Safe Area, 44px touch targets).
+- Авторизація — Django-сесія + CSRF, не JWT/токен.
 
 ---
 
 ## Типові завдання
 
-- **Нова сторінка/форма** → компонент у `pages/` → Route у `App.tsx` → Hook у `hooks/`.
+**Frontend:**
+- **Нова сторінка/форма** → компонент у `pages/` → Route у `App.tsx` → Hook у `hocks/`.
 - **Новий аналітичний звіт** → утиліта у `utils/calc...` → графік Recharts.
-- **Зміна логіки розрахунків** → оновити `utils/` → додати/оновити Mock дані.
+- **Зміна логіки розрахунків** → оновити `utils/` → додати/оновити Mock дані (якщо сторінка ще на mock).
 - **Новий UI компонент** → `components/ui/` з Tailwind стилями.
+
+**Backend:**
+- **Новий довідник/сутність** → модель у `apps/<app>/models.py` → `makemigrations`/`migrate` →
+  serializer → ViewSet (`get_permissions()` за роллю) → `urls.py` → підключити в `config/urls.py`.
+- **Зміна прав доступу** → `apps/accounts/permissions.py` (`HasRole`-класи).
+- **Новий довідник в Admin** → `admin.py` відповідного застосунку.

@@ -1,134 +1,226 @@
 # Vehicle Cost Tracker — TypeScript типи
 
-Файл: `src/types/index.ts`
+Файл: `vehicle_cost_tracker/src/types/index.ts`
+
+> **Оновлено 2026-08-24.** Це дзеркало реального файлу на момент
+> оновлення, не первинний план — реальний файл уже суттєво розійшовся
+> з планом (нові поля `CarSpecs`/`Trailer`/`CarStatusLog`,
+> `fuelCardNumber`, `driversLicense`, `idProduct: number` замість
+> `string`). **Якщо потрібна стовідсоткова точність — звіряй з живим
+> файлом**, цей документ може відстати знову. Відома розбіжність у
+> самому живому файлі (не виправлено навмисно, лишень фіксую): у
+> `WaybillRecord`/`WaybillSummary` поля `customerId`/`storeId` типізовані
+> як `string`, хоча відповідні `Customer.idCustomer`/`Store.idStore` —
+> `number`.
 
 ---
 
 ## Довідники
 
 ```typescript
-// ── Категорії товарів ──────────────────────────────────────
+// Категорія товару
 export interface ProductCategory {
   idCategory: number;
   nameCategory: string;
+  parentID: number | null;
+  description: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-// ── Товар ─────────────────────────────────────────────────
+// Константи для зручності в коді
+export const CATEGORY_DEFAULTS = {
+  ROOT_OTHER: 3,
+  CHILD_OTHER: 15,
+};
+
+// Товар із системи обліку 1С
 export interface Product {
-  idProduct: string;
+  idProduct: number;         // артикул 1С — ЧИСЛО, не рядок
   nameProduct: string;
-  idCategory: number | null;
+  idCategory: number;        // default: 15 ("Інше" → "Аксесуари")
   isActive: boolean;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+  // Опційні вкладені об'єкти (підвантажуються окремим запитом)
   category?: ProductCategory;
   logistics?: ProductLogistics;
 }
 
-// ── Логістичні дані товару ────────────────────────────────
+export const PRODUCT_DEFAULTS: Partial<Product> = {
+  idCategory: CATEGORY_DEFAULTS.CHILD_OTHER,
+  isActive: true,
+};
+
+// Логістичні дані товару — окрема таблиця в БД
 export interface ProductLogistics {
-  idProduct: string;
+  idProduct: number;
   unitWeightKg?: number;
   unitLengthCm?: number;
   unitWidthCm?: number;
   unitHeightCm?: number;
   unitsPerBox?: number;
-  boxWeightKg?: number;
   boxLengthCm?: number;
   boxWidthCm?: number;
   boxHeightCm?: number;
-  unitVolumeCbm?: number;   // розрахунковий
-  boxVolumeCbm?: number;    // розрахунковий
+  // Примітка: на відміну від первинного плану, unitVolumeCbm/
+  // boxVolumeCbm тут НЕ описані як поля типу — рахуються з інших полів
+  // на боці, що їх споживає (backend @property, не окремий JSON-ключ).
 }
 
-// ── Клієнт ────────────────────────────────────────────────
+// Клієнт (компанія-покупець)
 export interface Customer {
-  idCustomer: string;
+  idCustomer: number;
   nameCustomer: string;
   networkCustomer?: string;
   isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-// ── Магазин / торгова точка ───────────────────────────────
+// Магазин / торгова точка клієнта
 export interface Store {
-  idStore: string;
-  idCustomer: string;
+  idStore: number;
+  idCustomer: number;
   nameStore: string;
   storeAddress?: string;
   isActive: boolean;
   customer?: Customer;
-  deliveryAddresses?: StoreDeliveryAddress[];
+  deliveryAddress?: StoreDeliveryAddress[];
 }
 
+// Додаткова адреса доставки магазину
 export interface StoreDeliveryAddress {
   id: number;
-  idStore: string;
+  idStore: number;
   deliveryAddress: string;
   isPrimary: boolean;
   notes?: string;
 }
+```
 
-// ── Авто власного автопарку ───────────────────────────────
+---
+
+## Автопарк
+
+```typescript
+// Режим трекінгу водія на авто
 export type TrackingMode = "daily" | "full";
+
+// Статус авто
 export type CarStatus = "active" | "repair" | "inactive";
 
+// Авто власного автопарку
 export interface Car {
   idCar: number;
   nameCar: string;
   numberCar: string;
-  amountCar: number;            // амортизація грн/міс
-  defaultTrackingMode: TrackingMode;
+  fuelCardNumber?: number;        // немає в первинному плані
+  amountCar: number;              // амортизація грн/міс — фіксована
+  defaultTrackingMode?: TrackingMode;
   statusCar: CarStatus;
+  isActive: boolean;
+  specs?: CarSpecs;
+  trailer?: Trailer;
+}
+
+// Технічні характеристики авто — немає в первинному плані
+export interface CarSpecs {
+  idCar: number;
+  vinCode?: string;
+  yearManufactured?: number;
+  weightKg?: number;
+  payloadKg?: number;
+  lengthCm?: number;
+  widthCm?: number;
+  heightCm?: number;
+  hasTailLift: boolean;   // гідроборт, default: false
+  hasTrailer: boolean;    // default: false
+  trailer?: Trailer;
+}
+
+// Причіп — немає в первинному плані
+export interface Trailer {
+  idTrailer: number;
+  vinCode?: string;
+  yearManufactured?: number;
+  nameTrailer: string;
+  idCar: number;
+  model: string;
+  numberTrailer: string;
   isActive: boolean;
 }
 
-// ── Водій ─────────────────────────────────────────────────
+// Журнал зміни статусу авто — немає в первинному плані
+export interface CarStatusLog {
+  id: number;
+  idCar: number;
+  status: CarStatus;
+  reason?: string;
+  changedAt: string;
+  changedBy?: number;
+}
+
+// Водій
 export interface Driver {
   idDriver: number;
   nameDriver: string;
-  phone?: string;
+  phoneDriver?: string;
+  driversLicense?: string;   // немає в первинному плані
   idCar: number | null;
   isActive: boolean;
   car?: Car;
 }
+```
 
-// ── Юридична особа ────────────────────────────────────────
+---
+
+## Канал доставки
+
+```typescript
 export type LegalEntity = "ESP" | "OPT" | "Rubin";
 
-// ── Канал доставки ────────────────────────────────────────
+// Канал доставки — кожна накладна належить ТІЛЬКИ одному каналу
+// own     = власне авто (водій сканує QR)
+// hired   = найманий транспорт (логіст вносить)
+// carrier = служба доставки (НП, Міст Експрес)
 export type DeliveryChannel = "own" | "hired" | "carrier";
 ```
 
 ---
 
-## Реєстр накладних
+## Реєстр накладних (із 1С)
 
 ```typescript
-// ── Рядок накладної із 1С ─────────────────────────────────
+// Один рядок накладної із 1С
+// quantity > 0 = відвантаження
+// quantity < 0 = повернення
 export interface WaybillRecord {
   id: number;
   legalEntity: LegalEntity;
   waybillNumber: string;
   waybillDate: string;
   linePosition: number;
-  customerId: string;
+  customerId: string;         // ⚠️ string, хоча Customer.idCustomer — number
   customerName: string;
-  storeId?: string;             // нове поле
-  productId: string;
+  storeId?: string;           // ⚠️ те саме для Store.idStore
+  productId: number;
   productName: string;
-  quantity: number;             // + відвантаження, − повернення
+  quantity: number;
   priceUah: number;
   totalUah: number;
   comment?: string;
   totalWeightKg?: number;
   totalVolumeCbm?: number;
   volumetricWeightKg?: number;
-  deliveryChannel?: DeliveryChannel | null;  // null = ще не призначено
+  deliveryChannel?: DeliveryChannel | null;
+  status?: WaybillStatus;
   importedAt: string;
   importBatchId?: string;
 }
 
-export type WaybillLineType = "shipment" | "return";
-
-// ── Агрегована накладна ───────────────────────────────────
+// Агрегована накладна (всі рядки одної накладної → один рядок у таблиці UI)
 export interface WaybillSummary {
   legalEntity: LegalEntity;
   waybillNumber: string;
@@ -136,84 +228,80 @@ export interface WaybillSummary {
   customerId: string;
   customerName: string;
   storeId?: string;
+  storeName?: string;
   linesCount: number;
-  totalUah: number;
-  returnsUah: number;
+  totalUah: number;       // сума відвантажень
+  returnsUah: number;     // сума повернень (від'ємна)
   totalWeightKg?: number;
   totalVolumeCbm?: number;
   deliveryChannel?: DeliveryChannel | null;
-  // деталі каналу (залежно від deliveryChannel)
-  carId?: number;               // own
-  carNumber?: string;           // own
-  tripId?: number;              // hired
-  tripRouteName?: string;       // hired
-  shipmentId?: number;          // carrier
-  carrierName?: string;         // carrier
+  // Деталі каналу
+  carId?: number;
+  carNumber?: string;
+  tripId?: number;
+  tripRouteName?: string;
+  shipmentId?: number;
+  carrierName?: string;
   status: WaybillStatus;
 }
 
-export type WaybillStatus =
-  | "pending"     // не призначено до каналу
-  | "scanned"     // відскановано
-  | "delivered"
-  | "cancelled";
+export type WaybillStatus = "pending" | "scanned" | "delivered" | "cancelled";
 ```
 
 ---
 
-## Трекінг — власний автопарк
+## Трекінг маршруту (власний автопарк)
 
 ```typescript
-// ── Тип події ─────────────────────────────────────────────
 export type RouteEventType =
-  | "depot_start"
-  | "delivery"
-  | "parking_end"
-  | "depot_return"
-  | "refuel"
-  | "other_cost"
-  | "return_goods"
-  | "extra_cargo";
+  | "depot_start"   // ранок, склад
+  | "delivery"      // вивантаження у клієнта
+  | "parking_end"   // кінець дня
+  | "depot_return"  // повернення на склад
+  | "refuel"        // заправка
+  | "other_cost"    // інші витрати
+  | "return_goods"  // повернення товару
+  | "extra_cargo";  // додатковий вантаж
 
-// ── Відмова від поставки ──────────────────────────────────
+// Відмова від прийому товару
 export interface DeliveryRejection {
   isFull: boolean;
-  productId?: string;
+  productId?: number;
   quantity?: number;
   comment?: string;
 }
 
-// ── Подія маршруту ────────────────────────────────────────
+// Одна подія маршруту
 export interface RouteEvent {
   id: number;
   carId: number;
   driverId: number;
-  trackingMode: TrackingMode;
+  trackingMode?: TrackingMode;
   eventType: RouteEventType;
-  eventTs: string;
+  eventTs: string;              // ISO 8601
   odometerKm?: number;
-  palletsCount?: number;        // нове поле
+  palletsCount?: number;
 
-  // delivery
+  // Для delivery
   waybillNumber?: string;
   waybillDate?: string;
   customerName?: string;
   rejection?: DeliveryRejection;
 
-  // refuel
+  // Для refuel
   fuelLiters?: number;
   fuelCostUah?: number;
   adBlueLiters?: number;
   adBlueCostUah?: number;
 
-  // other_cost
-  otherCostsUah?: number;
-  otherCostsComment?: string;
+  // Для other_cost
+  otherCostUah?: number;
+  otherCostComment?: string;
 
-  // return_goods
+  // Для return_goods
   returnClientWaybill?: string;
 
-  // extra_cargo
+  // Для extra_cargo
   extraFrom?: string;
   extraTo?: string;
   extraWeightKg?: number;
@@ -226,7 +314,7 @@ export interface RouteEvent {
 
 export type RouteEventCreate = Omit<RouteEvent, "id" | "createdAt">;
 
-// ── Відрізок маршруту ─────────────────────────────────────
+// Відрізок маршруту між двома подіями (тільки full режим)
 export interface RouteSegment {
   fromEvent: RouteEventType;
   toEvent: RouteEventType;
@@ -236,45 +324,45 @@ export interface RouteSegment {
   durationMin: number;
 }
 
-// ── Денний підсумок ───────────────────────────────────────
+// Підсумок дня — розраховується з масиву RouteEvent
 export interface DailySummary {
   carId: number;
   driverId: number;
   trackingMode: TrackingMode;
   date: string;
   totalMileageKm: number;
-  loadedMileageKm: number | null;
-  emptyMileageKm: number | null;
-  palletsCount: number | null;  // нове поле
+  loadedMileageKm: number | null;   // null для daily режиму
+  emptyMileageKm: number | null;    // null для daily режиму
+  palletsCount: number | null;
   fuelLiters: number;
   fuelCostUah: number;
   adBlueLiters: number;
   adBlueCostUah: number;
-  otherCostsUah: number;
+  otherCostUah: number;
   deliveriesCount: number;
-  returnsCount: number;
+  returnCount: number;
   extraCargoCount: number;
   waybillNumbers: string[];
-  segments: RouteSegment[];
+  segments: RouteSegment[];   // [] для daily режиму
 }
 ```
 
 ---
 
-## Місячні витрати
+## Місячні витрати (від логіста)
 
 ```typescript
 export interface MonthlyCosts {
   id: number;
   carId: number;
-  month: string;
+  month: string;                // "2026-06"
   salaryUah: number;
   taxesUah: number;
   depreciationUah: number;
-  repairActualUah?: number;
-  repairRateUahKm: number;
-  otherCostsUah: number;
-  otherCostsComment?: string;
+  repairActualUah?: number;     // якщо є — пріоритет над розрахунковим
+  repairRateUahKm: number;      // default: 2.00 грн/км
+  otherCostUah: number;
+  otherCostComment?: string;
 }
 
 export type MonthlyCostsForm = Omit<MonthlyCosts, "id">;
@@ -291,21 +379,22 @@ export interface MonthlyCostsSummary extends MonthlyCosts {
 ## Найманий транспорт
 
 ```typescript
-// ── Рейс найманого транспорту ─────────────────────────────
 export interface HiredTransportTrip {
   id: number;
-  carNumber: string;            // вільний ввід
-  routeName: string;            // «Пирятин, Полтава, Харків»
+  carNumber: string;      // вільний ввід, не з довідника
+  routeName: string;
   tripDate: string;
   palletsCount?: number;
   costUah: number;
   comment?: string;
   createdAt: string;
-  // прив'язані накладні (join)
   waybills?: HiredTripWaybill[];
 }
 
-export type HiredTransportTripCreate = Omit<HiredTransportTrip, "id" | "createdAt" | "waybills">;
+export type HiredTransportTripCreate = Omit<
+  HiredTransportTrip,
+  "id" | "createdAt" | "waybills"
+>;
 
 export interface HiredTripWaybill {
   id: number;
@@ -313,37 +402,28 @@ export interface HiredTripWaybill {
   waybillNumber: string;
   scannedAt: string;
 }
-
-// ── Форма внесення рейсу (логіст) ────────────────────────
-export interface HiredTripFormState {
-  carNumber: string;
-  routeName: string;
-  tripDate: string;
-  palletsCount: string;
-  costUah: string;
-  comment: string;
-  scannedWaybills: ScannedWaybill[];
-}
 ```
 
 ---
 
-## Служби доставки
+## Служби доставки (НП, Міст Експрес)
 
 ```typescript
-// ── Відправлення через службу ─────────────────────────────
 export interface CarrierShipment {
   id: number;
-  carrierName: string;          // «Нова Пошта», «Міст Експрес»
-  ttn: string;                  // номер ТТН
+  carrierName: string;    // "Нова Пошта" / "Міст Експрес"
+  ttn: string;
   shipmentDate: string;
   comment?: string;
   createdAt: string;
   waybills?: CarrierWaybill[];
-  cost?: CarrierCost;           // після імпорту реєстру
+  cost?: CarrierCost;
 }
 
-export type CarrierShipmentCreate = Omit<CarrierShipment, "id" | "createdAt" | "waybills" | "cost">;
+export type CarrierShipmentCreate = Omit<
+  CarrierShipment,
+  "id" | "createdAt" | "waybills" | "cost"
+>;
 
 export interface CarrierWaybill {
   id: number;
@@ -352,7 +432,6 @@ export interface CarrierWaybill {
   scannedAt: string;
 }
 
-// ── Рядок реєстру витрат від служби ──────────────────────
 export interface CarrierCost {
   id: number;
   shipmentId?: number;
@@ -370,8 +449,11 @@ export interface CarrierCost {
 
 ## Аналітика
 
+> Ці типи вже описані на фронтенді, але **бекенд ще не має жодного
+> ендпоінту аналітики** (`apps.analytics` порожній, свідомо відкладено —
+> `01_PROJECT_OVERVIEW.md` §10 п.9).
+
 ```typescript
-// ── Транспортна собівартість по накладній (власний автопарк)
 export interface TransportCostPerWaybill {
   legalEntity: LegalEntity;
   waybillNumber: string;
@@ -388,7 +470,6 @@ export interface TransportCostPerWaybill {
   costPctOfSale: number;
 }
 
-// ── Транспортна собівартість по клієнту ──────────────────
 export interface TransportCostPerCustomer {
   customerId: string;
   customerName: string;
@@ -396,8 +477,6 @@ export interface TransportCostPerCustomer {
   waybillsCount: number;
   saleUah: number;
   totalWeightKg?: number;
-  totalVolumeCbm?: number;
-  // розбивка по каналах
   ownCostUah: number;
   hiredCostUah: number;
   carrierCostUah: number;
@@ -405,7 +484,6 @@ export interface TransportCostPerCustomer {
   costPctOfSale: number;
 }
 
-// ── Місячний підсумок по авто ─────────────────────────────
 export interface CarMonthlySummary {
   carId: number;
   carNumber: string;
@@ -419,10 +497,8 @@ export interface CarMonthlySummary {
   fuelLitersPer100Km: number;
   totalCostUah: number;
   costPerKmUah: number;
-  totalWeightKg?: number;
 }
 
-// ── Порівняння каналів доставки ───────────────────────────
 export interface ChannelComparison {
   month: string;
   ownWaybillsCount: number;
@@ -443,7 +519,10 @@ export interface ChannelComparison {
 ```typescript
 export type LoadingState = "idle" | "loading" | "success" | "error";
 
-export interface PaginationParams { page: number; pageSize: number; }
+export interface PaginationParams {
+  page: number;
+  pageSize: number;
+}
 
 export interface PaginatedResponse<T> {
   items: T[];
@@ -467,7 +546,11 @@ export interface WaybillFilters {
 
 export type SortField = "date" | "total" | "customer" | "vehicle" | "weight";
 export type SortDirection = "asc" | "desc";
-export interface SortParams { field: SortField; direction: SortDirection; }
+
+export interface SortParams {
+  field: SortField;
+  direction: SortDirection;
+}
 
 export interface ImportResult {
   batchId: string;
@@ -476,14 +559,19 @@ export interface ImportResult {
   errors: ImportError[];
 }
 
-export interface ImportError { row: number; field: string; message: string; }
+export interface ImportError {
+  row: number;
+  field: string;
+  message: string;
+}
 
+// Відскана накладна (у формі водія / логіста)
 export interface ScannedWaybill {
   waybillNumber: string;
   waybillDate: string;
   scannedAt: string;
   customerName?: string;
   storeName?: string;
-  deliveryChannel?: DeliveryChannel;  // перевірка ексклюзивності при скануванні
+  deliveryChannel?: DeliveryChannel;
 }
 ```

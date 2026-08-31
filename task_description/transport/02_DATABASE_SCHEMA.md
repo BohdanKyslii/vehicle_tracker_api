@@ -1,10 +1,19 @@
 # Vehicle Cost Tracker — Схема бази даних (PostgreSQL)
 
+> **Оновлено 2026-08-24.** Ця версія звірена з реальними Django-моделями
+> (`apps/cars`, `apps/products`, `apps/customers`, `apps/waybills`,
+> `apps/logistics`, `apps/accounts`), а не лише з початковим планом.
+> DDL нижче — це не буквальні `CREATE TABLE`, які виконував хтось
+> вручну (таблиці створені через Django-міграції), а SQL-еквівалент
+> реальної схеми, зручний для читання цілісної картини БД. Розбіжності
+> з первинним планом позначені `>` цитатами.
+
 ---
 
 ## Діаграма зв'язків
 
 ```
+product_categories      (1) ──< (N) product_categories  [self: parent/children]
 product_categories      (1) ──< (N) products
 products                (1) ──< (1) product_logistics
 products                (1) ──< (N) waybill_records
@@ -12,16 +21,24 @@ customers               (1) ──< (N) stores
 stores                  (1) ──< (N) store_delivery_addresses
 stores                  (1) ──< (N) waybill_records
 customers               (1) ──< (N) waybill_records
-cars                    (1) ──< (N) route_events
-cars                    (1) ──< (N) monthly_costs
+cars                     (1) ──< (1) car_specs
+cars                     (1) ──< (1) trailers            [лише якщо car_specs.has_trailer]
+cars                     (1) ──< (N) car_status_logs
+cars                     (1) ──< (N) route_events
+cars                     (1) ──< (N) monthly_costs
+cars                     (1) ──< (1) drivers             [OneToOne, поточне закріплення]
 drivers                 (1) ──< (N) route_events
-route_events            (N) >── (1) waybill_records     [waybill_number]
-hired_transport_trips   (1) ──< (N) hired_trip_waybills [waybill_number]
-carrier_shipments       (1) ──< (N) carrier_costs
-carrier_shipments       (1) ──< (N) carrier_waybills    [waybill_number]
+drivers                 (1) ──< (1) profiles             [Telegram/веб-акаунт водія]
+route_events            (N) >── (1) waybill_records      [waybill_number, "м'який" зв'язок — не FK]
+hired_transport_trips   (1) ──< (N) hired_trip_waybills  [waybill_number]
+carrier_shipments       (1) ──< (N) carrier_shipment_waybills [waybill_number]
+carrier_shipments       (1) ──< (N) carrier_costs        [матчинг по ttn]
 
 Канал доставки накладної (ексклюзивний):
   waybill_records.delivery_channel IN ('own', 'hired', 'carrier', NULL)
+  Ексклюзивність — на рівні app-логіки (views), НЕ БД-constraint:
+  unique=True на waybill_number у hired_trip_waybills/carrier_shipment_waybills
+  + явна перевірка delivery_channel перед призначенням.
 ```
 
 ---
@@ -30,33 +47,52 @@ carrier_shipments       (1) ──< (N) carrier_waybills    [waybill_number]
 
 ### `product_categories`
 
+> Реалізовано з ієрархією (не було в первинному плані): `parent` —
+> self-FK, `on_delete=SET_NULL`. Коренева категорія — `parent IS NULL`.
+
 ```sql
 CREATE TABLE product_categories (
-    id_category   SERIAL       PRIMARY KEY,
-    name_category VARCHAR(150) NOT NULL UNIQUE
+    id            SERIAL       PRIMARY KEY,
+    name_category VARCHAR(150) NOT NULL UNIQUE,
+    parent_id     INTEGER      REFERENCES product_categories(id) ON DELETE SET NULL,
+    description   TEXT         NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX idx_pc_parent ON product_categories (parent_id);
 ```
 
 ### `products`
 
+> `id_product` — `IntegerField PRIMARY KEY` (артикул із 1С як число),
+> **не `VARCHAR`**, як планувалось спочатку.
+
 ```sql
 CREATE TABLE products (
-    id_product   VARCHAR(50)  PRIMARY KEY,
+    id_product   INTEGER      PRIMARY KEY,
     name_product VARCHAR(255) NOT NULL,
-    id_category  INTEGER      REFERENCES product_categories(id_category)
-                              ON DELETE SET NULL,
+    category_id  INTEGER      REFERENCES product_categories(id)
+                              ON DELETE SET NULL DEFAULT 15,  -- "Інше"
+    description  TEXT         NOT NULL DEFAULT '',
     is_active    BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_products_category ON products (id_category);
+CREATE INDEX idx_products_category ON products (category_id);
 ```
 
 ### `product_logistics`
 
+> Розрахункові поля (`unit_volume_cbm`, `box_volume_cbm`,
+> `calculated_box_weight_kg`) реалізовані як Python `@property` на
+> моделі, **не** як PostgreSQL `GENERATED ALWAYS AS ... STORED` колонки,
+> як планувалось спочатку — рахуються на боці Django, не в БД.
+
 ```sql
 CREATE TABLE product_logistics (
-    id_product      VARCHAR(50) PRIMARY KEY
+    product_id      INTEGER PRIMARY KEY
                     REFERENCES products(id_product) ON DELETE CASCADE,
     unit_weight_kg  NUMERIC(8,3),
     unit_length_cm  NUMERIC(8,2),
@@ -67,46 +103,45 @@ CREATE TABLE product_logistics (
     box_length_cm   NUMERIC(8,2),
     box_width_cm    NUMERIC(8,2),
     box_height_cm   NUMERIC(8,2),
-    -- розрахункові об'єми (generated columns)
-    unit_volume_cbm NUMERIC(10,6) GENERATED ALWAYS AS (
-        (unit_length_cm * unit_width_cm * unit_height_cm) / 1000000.0
-    ) STORED,
-    box_volume_cbm  NUMERIC(10,6) GENERATED ALWAYS AS (
-        (box_length_cm * box_width_cm * box_height_cm) / 1000000.0
-    ) STORED,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    -- unit_volume_cbm / box_volume_cbm / calculated_box_weight_kg —
+    -- НЕ зберігаються в БД, обчислюються @property на моделі при читанні
 );
 ```
 
 ### `customers`
 
+> `id_customer` — `IntegerField PRIMARY KEY`, не `VARCHAR`.
+
 ```sql
 CREATE TABLE customers (
-    id_customer      VARCHAR(50)  PRIMARY KEY,
+    id_customer      INTEGER      PRIMARY KEY,
     name_customer    VARCHAR(255) NOT NULL,
-    network_customer VARCHAR(150),
+    network_customer VARCHAR(150) NOT NULL DEFAULT '',
     is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 ```
 
 ### `stores` — Торгові точки / магазини клієнта
 
+> `id_store` — `IntegerField PRIMARY KEY`, не `VARCHAR`.
+> `customer_id` — `on_delete=RESTRICT` (не можна видалити клієнта, поки
+> є магазини).
+
 ```sql
 CREATE TABLE stores (
-    id_store       VARCHAR(50)  PRIMARY KEY,
-    id_customer    VARCHAR(50)  NOT NULL
+    id_store       INTEGER      PRIMARY KEY,
+    customer_id    INTEGER      NOT NULL
                    REFERENCES customers(id_customer) ON DELETE RESTRICT,
     name_store     VARCHAR(255) NOT NULL,
-    store_address  VARCHAR(500),
+    store_address  VARCHAR(500) NOT NULL DEFAULT '',
     is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
     updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_stores_customer ON stores (id_customer);
-
-COMMENT ON TABLE stores IS
-    'Торгові точки / магазини клієнта. Один клієнт — багато торгових точок.';
+CREATE INDEX idx_stores_customer ON stores (customer_id);
 ```
 
 ### `store_delivery_addresses` — Додаткові адреси доставки
@@ -114,18 +149,15 @@ COMMENT ON TABLE stores IS
 ```sql
 CREATE TABLE store_delivery_addresses (
     id               SERIAL       PRIMARY KEY,
-    id_store         VARCHAR(50)  NOT NULL
+    store_id         INTEGER      NOT NULL
                      REFERENCES stores(id_store) ON DELETE CASCADE,
     delivery_address VARCHAR(500) NOT NULL,
     is_primary       BOOLEAN      NOT NULL DEFAULT FALSE,
-    notes            TEXT,
+    notes            TEXT         NOT NULL DEFAULT '',
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_sda_store ON store_delivery_addresses (id_store);
-
-COMMENT ON TABLE store_delivery_addresses IS
-    'Одна торгова точка може мати кілька адрес доставки.';
+CREATE INDEX idx_sda_store ON store_delivery_addresses (store_id);
 ```
 
 ---
@@ -134,41 +166,125 @@ COMMENT ON TABLE store_delivery_addresses IS
 
 ### `cars` — Авто власного автопарку
 
+> PK — стандартний Django `id` (не `id_car`, як у первинному плані).
+> Додано `fuel_card_number` (не було в плані).
+
 ```sql
 CREATE TABLE cars (
-    id_car                SERIAL       PRIMARY KEY,
-    name_car              VARCHAR(100) NOT NULL,
-    number_car            VARCHAR(20)  NOT NULL UNIQUE,
-    amount_car            NUMERIC(12,2) NOT NULL DEFAULT 0,
-    default_tracking_mode VARCHAR(10)  NOT NULL DEFAULT 'daily'
-                          CHECK (default_tracking_mode IN ('daily', 'full')),
-    status_car            VARCHAR(20)  NOT NULL DEFAULT 'active'
-                          CHECK (status_car IN ('active', 'repair', 'inactive')),
-    is_active             BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    id                     SERIAL       PRIMARY KEY,
+    name_car               VARCHAR(100) NOT NULL,
+    number_car             VARCHAR(17)  NOT NULL UNIQUE,
+    fuel_card_number       BIGINT,
+    amount_car             NUMERIC(12,2) NOT NULL DEFAULT 0,
+    default_tracking_mode  VARCHAR(10)  NOT NULL DEFAULT 'daily'
+                           CHECK (default_tracking_mode IN ('daily', 'full')),
+    status_car             VARCHAR(20)  NOT NULL DEFAULT 'active'
+                           CHECK (status_car IN ('active', 'repair', 'inactive')),
+    is_active              BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 COMMENT ON COLUMN cars.amount_car IS
     'Амортизація авто (грн/міс) — стала величина, логіст може коригувати';
-COMMENT ON COLUMN cars.default_tracking_mode IS
-    'Дефолтний режим трекінгу, що задає логіст. Водій може змінити на поточний день.';
+```
+
+### `car_specs` — Технічні характеристики авто (1:1)
+
+> Немає в первинному плані — реалізовано в Крок 3.5
+> `DJANGO_CODING_GUIDE.md`.
+
+```sql
+CREATE TABLE car_specs (
+    car_id             INTEGER      PRIMARY KEY REFERENCES cars(id) ON DELETE CASCADE,
+    vin_code           VARCHAR(17)  NOT NULL DEFAULT '',
+    year_manufactured  SMALLINT,
+    weight_kg          NUMERIC(10,2),
+    payload_kg         NUMERIC(10,2),
+    length_cm          NUMERIC(8,2),
+    width_cm           NUMERIC(8,2),
+    height_cm          NUMERIC(8,2),
+    has_tail_lift      BOOLEAN      NOT NULL DEFAULT FALSE,  -- гідроборт
+    has_trailer        BOOLEAN      NOT NULL DEFAULT FALSE
+);
+```
+
+### `trailers` — Причіп (1:1, тільки якщо `car_specs.has_trailer`)
+
+```sql
+CREATE TABLE trailers (
+    car_id            INTEGER      PRIMARY KEY REFERENCES cars(id) ON DELETE CASCADE,
+    name_trailer      VARCHAR(150) NOT NULL DEFAULT '',
+    vin_code          VARCHAR(17)  NOT NULL DEFAULT '',
+    model             VARCHAR(100) NOT NULL,
+    number_trailer    VARCHAR(20)  NOT NULL UNIQUE,
+    year_manufactured SMALLINT,
+    is_active         BOOLEAN      NOT NULL DEFAULT TRUE
+);
+```
+
+### `car_status_logs` — Журнал зміни статусів авто
+
+> Немає в первинному плані. Потрібен для підрахунку днів у ремонті за
+> місяць.
+
+```sql
+CREATE TABLE car_status_logs (
+    id          BIGSERIAL    PRIMARY KEY,
+    car_id      INTEGER      NOT NULL REFERENCES cars(id) ON DELETE CASCADE,
+    status      VARCHAR(20)  NOT NULL,   -- той самий CHECK, що й cars.status_car
+    reason      TEXT         NOT NULL DEFAULT '',
+    changed_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    changed_by  INTEGER      REFERENCES auth_user(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_csl_car ON car_status_logs (car_id, changed_at);
 ```
 
 ### `drivers` — Водії
 
+> `car_id` — **`OneToOneField`** (`UNIQUE`), не звичайний FK, як у
+> первинному плані: одне авто = один активний водій одночасно на рівні
+> БД-constraint, не лише app-логіки.
+
 ```sql
 CREATE TABLE drivers (
-    id_driver  SERIAL       PRIMARY KEY,
-    name_driver VARCHAR(150) NOT NULL,
-    phone       VARCHAR(20),
-    id_car      INTEGER      REFERENCES cars(id_car) ON DELETE SET NULL,
-    is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    id               SERIAL       PRIMARY KEY,
+    name_driver      VARCHAR(150) NOT NULL,
+    phone            VARCHAR(20)  NOT NULL DEFAULT '',
+    drivers_license  VARCHAR(50)  NOT NULL DEFAULT '',  -- не було в плані
+    car_id           INTEGER      UNIQUE
+                     REFERENCES cars(id) ON DELETE SET NULL,
+    is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_drivers_car ON drivers (id_car);
+COMMENT ON COLUMN drivers.car_id IS
+    'Поточне закріплене авто. UNIQUE — одне авто не може мати двох
+     активних водіїв одночасно (DB-рівень, не тільки app-логіка).';
+```
 
-COMMENT ON COLUMN drivers.id_car IS 'Поточне закріплене авто';
+### `profiles` — Акаунт водія/логіста/менеджера/керівника (авторизація)
+
+> Немає в первинному плані взагалі — весь шар авторизації
+> (`apps.accounts`) з'явився пізніше (Фаза 4.5, потім Telegram-бот).
+> Не є частиною домену "автопарк", але прив'язана до `drivers`.
+
+```sql
+CREATE TYPE profile_role AS ENUM ('driver', 'logist', 'manager', 'head');
+
+CREATE TABLE profiles (
+    id           SERIAL       PRIMARY KEY,
+    user_id      INTEGER      NOT NULL UNIQUE REFERENCES auth_user(id) ON DELETE CASCADE,
+    role         profile_role NOT NULL,
+    phone        VARCHAR(17)  NOT NULL DEFAULT '',
+    telegram_id  BIGINT       UNIQUE,
+    driver_id    INTEGER      UNIQUE REFERENCES drivers(id) ON DELETE SET NULL
+);
+
+COMMENT ON COLUMN profiles.driver_id IS
+    'Тільки для role=driver — лінк на картку Driver. Реєстрація через
+     Telegram-бота створює Driver і лінкує його автоматично (2026-08-16+);
+     старіші акаунти могли лінкуватись вручну в Django Admin.';
 ```
 
 ---
@@ -187,16 +303,16 @@ CREATE TABLE waybill_records (
     waybill_number   VARCHAR(50)   NOT NULL,
     waybill_date     DATE          NOT NULL,
     line_position    SMALLINT      NOT NULL,
-    customer_id      VARCHAR(50)   REFERENCES customers(id_customer) ON DELETE SET NULL,
-    customer_name    VARCHAR(255)  NOT NULL,
-    store_id         VARCHAR(50)   REFERENCES stores(id_store) ON DELETE SET NULL,
-    product_id       VARCHAR(50)   REFERENCES products(id_product) ON DELETE SET NULL,
-    product_name     VARCHAR(255)  NOT NULL,
+    customer_id      INTEGER       REFERENCES customers(id_customer) ON DELETE SET NULL,
+    customer_name    VARCHAR(255)  NOT NULL,   -- копія на момент імпорту
+    store_id         INTEGER       REFERENCES stores(id_store) ON DELETE SET NULL,
+    product_id       INTEGER       REFERENCES products(id_product) ON DELETE SET NULL,
+    product_name     VARCHAR(255)  NOT NULL,   -- копія на момент імпорту
     -- quantity: + відвантаження, - повернення
     quantity         NUMERIC(10,3) NOT NULL,
     price_uah        NUMERIC(12,2) NOT NULL,
     total_uah        NUMERIC(14,2) NOT NULL,
-    comment          TEXT,
+    comment          TEXT          NOT NULL DEFAULT '',
     -- логістика (з product_logistics при імпорті)
     total_weight_kg       NUMERIC(12,3),
     total_volume_cbm      NUMERIC(12,6),
@@ -205,30 +321,27 @@ CREATE TABLE waybill_records (
     delivery_channel  delivery_channel,
     -- службові
     imported_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    import_batch_id   VARCHAR(50),
+    import_batch_id   VARCHAR(50)  NOT NULL DEFAULT '',
 
     UNIQUE (waybill_number, line_position)
 );
 
 CREATE INDEX idx_wr_date          ON waybill_records (waybill_date);
 CREATE INDEX idx_wr_number        ON waybill_records (waybill_number);
-CREATE INDEX idx_wr_customer      ON waybill_records (customer_id);
-CREATE INDEX idx_wr_store         ON waybill_records (store_id);
-CREATE INDEX idx_wr_product       ON waybill_records (product_id);
-CREATE INDEX idx_wr_legal         ON waybill_records (legal_entity);
 CREATE INDEX idx_wr_channel       ON waybill_records (delivery_channel);
--- Партіальні індекси
-CREATE INDEX idx_wr_returns       ON waybill_records (waybill_number)
-    WHERE quantity < 0;
-CREATE INDEX idx_wr_unassigned    ON waybill_records (waybill_date)
-    WHERE delivery_channel IS NULL;
+-- Реалізовано (Крок 3.6): ordering = ["-waybill_date", "waybill_number"]
 
 COMMENT ON COLUMN waybill_records.quantity IS
-    'Додатнє — відвантаження; від''ємне — повернення';
+    'Додатнє — відвантаження; від''ємне — повернення (підтверджено для
+     Rubin; для ESP/OPT — статус з''ясовується, IMPORT_1C_SPEC.md Q7).';
 COMMENT ON COLUMN waybill_records.delivery_channel IS
     'Канал доставки: own=власне авто, hired=найманий транспорт, carrier=служба доставки.
-     NULL = ще не призначено. Унікальність каналу забезпечується на рівні app-логіки.';
+     NULL = ще не призначено. Ексклюзивність — на рівні app-логіки (views), не DB-constraint.';
 ```
+
+> **Крок 11 (імпорт з 1С) ще не реалізований** — модель і API вже є,
+> потрібен upload-ендпоінт + парсери під CSV (Rubin) і XLS (ESP/OPT).
+> Деталі формату джерел — `task_description/IMPORT_1C_SPEC.md`.
 
 ---
 
@@ -250,25 +363,25 @@ CREATE TYPE route_event_type AS ENUM (
 
 CREATE TABLE route_events (
     id               BIGSERIAL        PRIMARY KEY,
-    car_id           INTEGER          NOT NULL REFERENCES cars(id_car),
-    driver_id        INTEGER          NOT NULL REFERENCES drivers(id_driver),
+    car_id           INTEGER          NOT NULL REFERENCES cars(id) ON DELETE RESTRICT,
+    driver_id        INTEGER          NOT NULL REFERENCES drivers(id) ON DELETE RESTRICT,
     tracking_mode    VARCHAR(10)      NOT NULL CHECK (tracking_mode IN ('daily', 'full')),
     event_type       route_event_type NOT NULL,
-    event_ts         TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+    event_ts         TIMESTAMPTZ      NOT NULL,
     odometer_km      INTEGER,
     -- кількість палет (depot_start daily / delivery full)
     pallets_count    SMALLINT,
 
     -- для delivery
-    waybill_number   VARCHAR(50),
+    waybill_number   VARCHAR(50)      NOT NULL DEFAULT '',
     waybill_date     DATE,
-    customer_name    VARCHAR(255),
+    customer_name    VARCHAR(255)     NOT NULL DEFAULT '',
 
     -- відмова від поставки (delivery, full)
-    rejection_full       BOOLEAN,
-    rejection_product_id VARCHAR(50),
-    rejection_qty        NUMERIC(10,3),
-    rejection_comment    TEXT,
+    rejection_full         BOOLEAN,
+    rejection_product_id   VARCHAR(50)  NOT NULL DEFAULT '',
+    rejection_qty          NUMERIC(10,3),
+    rejection_comment      TEXT         NOT NULL DEFAULT '',
 
     -- для refuel
     fuel_liters      NUMERIC(8,2),
@@ -278,48 +391,47 @@ CREATE TABLE route_events (
 
     -- для other_cost
     other_costs_uah     NUMERIC(10,2),
-    other_costs_comment TEXT,
+    other_costs_comment TEXT NOT NULL DEFAULT '',
 
     -- для return_goods
-    return_client_waybill VARCHAR(50),
+    return_client_waybill VARCHAR(50) NOT NULL DEFAULT '',
 
     -- для extra_cargo
-    extra_from       VARCHAR(255),
-    extra_to         VARCHAR(255),
+    extra_from       VARCHAR(255) NOT NULL DEFAULT '',
+    extra_to         VARCHAR(255) NOT NULL DEFAULT '',
     extra_weight_kg  NUMERIC(10,3),
-    extra_waybill    VARCHAR(50),
-    extra_comment    TEXT,
+    extra_waybill    VARCHAR(50)  NOT NULL DEFAULT '',
+    extra_comment    TEXT         NOT NULL DEFAULT '',
 
-    notes            TEXT,
+    notes            TEXT NOT NULL DEFAULT '',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_re_car_ts   ON route_events (car_id, event_ts);
-CREATE INDEX idx_re_date     ON route_events (DATE(event_ts));
-CREATE INDEX idx_re_waybill  ON route_events (waybill_number)
-    WHERE waybill_number IS NOT NULL;
-CREATE INDEX idx_re_type     ON route_events (event_type);
+CREATE INDEX idx_re_car_ts ON route_events (car_id, event_ts);
+CREATE INDEX idx_re_type   ON route_events (event_type);
 
 COMMENT ON COLUMN route_events.pallets_count IS
     'Кількість палет: для daily — на весь день; для full — на точку вивантаження';
-COMMENT ON COLUMN route_events.tracking_mode IS
-    'Режим, обраний водієм на поточний день (може відрізнятись від cars.default_tracking_mode)';
 ```
+
+> `rejection_product_id` посилається на `products.id_product` лише
+> текстово (не FK) — реальна модель зберігає його як `CharField`, без
+> `REFERENCES`.
 
 ### `monthly_costs` — Місячні витрати по авто
 
 ```sql
 CREATE TABLE monthly_costs (
     id                   SERIAL        PRIMARY KEY,
-    car_id               INTEGER       NOT NULL REFERENCES cars(id_car),
-    month                DATE          NOT NULL,
+    car_id               INTEGER       NOT NULL REFERENCES cars(id) ON DELETE RESTRICT,
+    month                DATE          NOT NULL,   -- перше число місяця
     salary_uah           NUMERIC(10,2) NOT NULL DEFAULT 0,
     taxes_uah            NUMERIC(10,2) NOT NULL DEFAULT 0,
     depreciation_uah     NUMERIC(10,2) NOT NULL DEFAULT 0,
     repair_actual_uah    NUMERIC(10,2),
     repair_rate_uah_km   NUMERIC(6,2)  NOT NULL DEFAULT 2.00,
     other_costs_uah      NUMERIC(10,2) NOT NULL DEFAULT 0,
-    other_costs_comment  TEXT,
+    other_costs_comment  TEXT          NOT NULL DEFAULT '',
     created_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     updated_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
 
@@ -339,23 +451,16 @@ COMMENT ON COLUMN monthly_costs.repair_actual_uah IS
 ```sql
 CREATE TABLE hired_transport_trips (
     id             SERIAL        PRIMARY KEY,
-    car_number     VARCHAR(30)   NOT NULL,   -- вільний ввід
+    car_number     VARCHAR(20)   NOT NULL,   -- вільний ввід, не з довідника
     route_name     VARCHAR(255)  NOT NULL,   -- «Пирятин, Полтава, Харків»
     trip_date      DATE          NOT NULL,
     pallets_count  SMALLINT,
-    cost_uah       NUMERIC(12,2) NOT NULL,
-    comment        TEXT,
-    created_by     INTEGER,                  -- id логіста (майбутнє)
+    cost_uah       NUMERIC(10,2) NOT NULL,
+    comment        TEXT          NOT NULL DEFAULT '',
     created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_htt_date       ON hired_transport_trips (trip_date);
-CREATE INDEX idx_htt_car_number ON hired_transport_trips (car_number);
-
-COMMENT ON TABLE hired_transport_trips IS
-    'Рейси найманого транспорту. Авто вводиться вільним текстом (не з довідника).';
-COMMENT ON COLUMN hired_transport_trips.route_name IS
-    'Довільна назва маршруту, напр. "Пирятин, Полтава, Харків"';
+CREATE INDEX idx_htt_date ON hired_transport_trips (trip_date);
 ```
 
 ### `hired_trip_waybills` — Прив'язка накладних до рейсу найманого транспорту
@@ -365,57 +470,50 @@ CREATE TABLE hired_trip_waybills (
     id             SERIAL        PRIMARY KEY,
     trip_id        INTEGER       NOT NULL
                    REFERENCES hired_transport_trips(id) ON DELETE CASCADE,
-    waybill_number VARCHAR(50)   NOT NULL,
-    scanned_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-
-    UNIQUE (waybill_number)  -- накладна може бути тільки в одному рейсі
+    waybill_number VARCHAR(50)   NOT NULL UNIQUE  -- накладна тільки в одному рейсі
 );
 
-CREATE INDEX idx_htw_trip    ON hired_trip_waybills (trip_id);
-CREATE INDEX idx_htw_waybill ON hired_trip_waybills (waybill_number);
-
-COMMENT ON COLUMN hired_trip_waybills.waybill_number IS
-    'UNIQUE: накладна може бути призначена тільки до одного рейсу.
-     Додатково перевіряємо, що waybill_records.delivery_channel IS NULL перед вставкою.';
+CREATE INDEX idx_htw_trip ON hired_trip_waybills (trip_id);
 ```
 
 ---
 
 ## Служби доставки
 
+> Первинний план мав окремі поля `carrier_name` (вільний текст) у
+> `carrier_shipments`/`carrier_costs`. Реальна реалізація —
+> `CarrierShipment.carrier` як `CharField` із `choices`
+> (`nova_poshta` / `mist_express` / `other`), не вільний текст.
+
 ### `carrier_shipments` — Відправлення через службу доставки
 
 ```sql
 CREATE TABLE carrier_shipments (
-    id               SERIAL        PRIMARY KEY,
-    carrier_name     VARCHAR(100)  NOT NULL,  -- «Нова Пошта», «Міст Експрес»
-    ttn              VARCHAR(100)  NOT NULL,  -- номер ТТН у службі
-    shipment_date    DATE          NOT NULL,
-    comment          TEXT,
-    created_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-
-    UNIQUE (carrier_name, ttn)
+    id             SERIAL        PRIMARY KEY,
+    carrier        VARCHAR(20)   NOT NULL
+                   CHECK (carrier IN ('nova_poshta', 'mist_express', 'other')),
+    ttn            VARCHAR(50)   NOT NULL UNIQUE,
+    shipment_date  DATE          NOT NULL,
+    created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_cs_date    ON carrier_shipments (shipment_date);
-CREATE INDEX idx_cs_carrier ON carrier_shipments (carrier_name);
+CREATE INDEX idx_cs_date ON carrier_shipments (shipment_date);
 ```
 
-### `carrier_waybills` — Прив'язка накладних до відправлення
+### `carrier_shipment_waybills` — Прив'язка накладних до відправлення
+
+> Первинний план називав цю таблицю `carrier_waybills` — реальна назва
+> `carrier_shipment_waybills`.
 
 ```sql
-CREATE TABLE carrier_waybills (
-    id               SERIAL      PRIMARY KEY,
-    shipment_id      INTEGER     NOT NULL
-                     REFERENCES carrier_shipments(id) ON DELETE CASCADE,
-    waybill_number   VARCHAR(50) NOT NULL,
-    scanned_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    UNIQUE (waybill_number)  -- накладна тільки в одній службі
+CREATE TABLE carrier_shipment_waybills (
+    id             SERIAL      PRIMARY KEY,
+    shipment_id    INTEGER     NOT NULL
+                   REFERENCES carrier_shipments(id) ON DELETE CASCADE,
+    waybill_number VARCHAR(50) NOT NULL UNIQUE  -- накладна тільки в одній службі
 );
 
-CREATE INDEX idx_cw_shipment ON carrier_waybills (shipment_id);
-CREATE INDEX idx_cw_waybill  ON carrier_waybills (waybill_number);
+CREATE INDEX idx_csw_shipment ON carrier_shipment_waybills (shipment_id);
 ```
 
 ### `carrier_costs` — Реєстр витрат від служб доставки
@@ -424,27 +522,33 @@ CREATE INDEX idx_cw_waybill  ON carrier_waybills (waybill_number);
 CREATE TABLE carrier_costs (
     id              BIGSERIAL     PRIMARY KEY,
     shipment_id     INTEGER       REFERENCES carrier_shipments(id) ON DELETE SET NULL,
-    carrier_name    VARCHAR(100)  NOT NULL,
-    ttn             VARCHAR(100)  NOT NULL,
+    ttn             VARCHAR(50)   NOT NULL,   -- копія, для матчингу навіть без shipment
+    weight_kg       NUMERIC(10,3) NOT NULL,
+    cost_uah        NUMERIC(10,2) NOT NULL,
     cost_date       DATE          NOT NULL,
-    weight_kg       NUMERIC(10,3),
-    cost_uah        NUMERIC(12,2) NOT NULL,
-    -- службові
-    import_batch_id VARCHAR(50),
     imported_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_cc_ttn     ON carrier_costs (carrier_name, ttn);
-CREATE INDEX idx_cc_date    ON carrier_costs (cost_date);
+CREATE INDEX idx_cc_ttn ON carrier_costs (ttn);
 
 COMMENT ON TABLE carrier_costs IS
-    'Реєстр витрат, імпортований від служби доставки.
-     Матчиться з carrier_shipments по (carrier_name, ttn).';
+    'Реєстр витрат, імпортований від служби доставки. Матчиться з
+     carrier_shipments по ttn при створенні (perform_create), не
+     окремим ендпоінтом.';
 ```
+
+> ⚠️ **Ще не реалізовано в цьому проєкті:** імпорт-ендпоінт для
+> `carrier_costs` (щотижневий реєстр витрат від НП/Міст Експрес) —
+> модель і `CRUD`-viewset є, парсера/upload-форми немає.
 
 ---
 
 ## VIEWs
+
+> Нижче — SQL-начерки з первинного плану аналітичних VIEW. **Жодного з
+> них не створено в реальній БД** — `apps.analytics` свідомо
+> відкладений до накопичення реальних даних (див. `01_PROJECT_OVERVIEW.md`
+> §10, п.9). Залишено як орієнтир логіки розрахунку, не як актуальний DDL.
 
 ### `daily_summaries`
 
