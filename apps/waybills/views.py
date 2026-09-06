@@ -1,9 +1,18 @@
-from django.db.migrations import serializer
-from rest_framework import viewsets, filters
+from rest_framework import filters, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from apps.accounts.permissions import IsManagerOrHeadOnly
+from .importers.base import HeaderMismatchError
+from .importers.esp_opt_xls import parse_esp_opt_xls
+from .importers.rubin_csv import parse_rubin_csv
+from .importing import import_waybills
 from .models import WaybillRecord
 from .serializers import WaybillRecordSerializer
+
+WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 
 class WaybillRecordViewSet(viewsets.ModelViewSet):
     """
@@ -17,6 +26,12 @@ class WaybillRecordViewSet(viewsets.ModelViewSet):
     search_fields = ["waybill_number", "customer_name", "product_name"]
     ordering_fields = ["waybill_number", "waybill_date", "total_uah"]
     ordering = ["-waybill_date", "waybill_number"]
+
+    def get_permissions(self):
+        """Читання — будь-який залогинений; запис — тільки manager/head (не logist)."""
+        if self.action in WRITE_ACTIONS:
+            return [IsAuthenticated(), IsManagerOrHeadOnly()]
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         """Фільтри: клієнт, товар, юрособа, канал доставки, діапазон дат."""
@@ -77,3 +92,51 @@ class WaybillRecordViewSet(viewsets.ModelViewSet):
         record.delivery_channel = channel
         record.save()
         return Response(WaybillRecordSerializer(record).data)
+
+    @action(
+        detail=False, methods=["post"],
+        permission_classes=[IsAuthenticated, IsManagerOrHeadOnly],
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def import_file(self, request):
+        """
+        POST /api/waybill-records/import_file/ — multipart/form-data:
+        {legal_entity: "Rubin"|"ESP"|"OPT", file: <.csv|.xls>}.
+        Юрособу завжди обирає менеджер явно (Q8) — бекенд не вгадує її
+        з вмісту файлу.
+        """
+        legal_entity = request.data.get("legal_entity")
+        upload = request.FILES.get("file")
+
+        if legal_entity not in [c.value for c in WaybillRecord.LegalEntity]:
+            return Response({"error": "Невірна юридична особа"}, status=400)
+        if not upload:
+            return Response({"error": "Файл обов'язковий"}, status=400)
+
+        try:
+            if legal_entity == WaybillRecord.LegalEntity.RUBIN:
+                rows, errors = parse_rubin_csv(upload.file)
+            else:
+                rows, errors = parse_esp_opt_xls(upload, legal_entity)
+        except HeaderMismatchError as exc:
+            return Response(
+                {
+                    "error": "Формат файлу не відповідає очікуваному",
+                    "expected": exc.expected,
+                    "actual": exc.actual,
+                },
+                status=400,
+            )
+
+        if not rows:
+            return Response(
+                {
+                    "error": "Жодного рядка не вдалось розпізнати",
+                    "errors": [{"row": e.row, "field": e.field, "message": e.message} for e in errors],
+                },
+                status=400,
+            )
+
+        result = import_waybills(legal_entity, rows)
+        result["errors"] = [{"row": e.row, "field": e.field, "message": e.message} for e in errors]
+        return Response(result, status=201)

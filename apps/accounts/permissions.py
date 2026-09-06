@@ -20,3 +20,13 @@ class IsHeadOnly(HasRole):
     користувачів (ролі, підтвердження реєстрацій, Telegram-лінкування).
     """
     allowed_roles = ('head',)
+
+class IsManagerOrHeadOnly(HasRole):
+    """
+    На відміну від IsManagerOrHead (яка навмисно впускає й logist —
+    для Car.change_status і CarrierShipment/CarrierCost), тут logist
+    НЕ повинен мати доступу: імпорт із 1С — задача
+    менеджера-операціоніста в офісі (IMPORT_1C_SPEC.md, §1), а не
+    логіста.
+    """
+    allowed_roles = ('manager', 'head')
