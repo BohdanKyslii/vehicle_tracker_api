@@ -236,6 +236,37 @@ Backend (`vehicle_tracker_api`, Django/DRF) розгорнутий на Raspberr
   реальний оновлений файл або підтвердить `EXPECTED_HEADER` у
   `esp_opt_xls.py`, або впаде з `HeaderMismatchError` — це очікувано,
   не баг.
+- **2026-09-06 (наведення ладу в репозиторії):** git тягнув у прод
+  зайве: `task_description/file_1C/` (сирі зразки з 1С, 7.7MB, ніколи
+  не мав бути в git — не трекався, просто прибраний з диска),
+  `task_description/task_description/ruff_check.md` (дублюючий вкладений
+  каталог) і `mentor_summary_draft.md` (чернетка для ментора) видалено
+  остаточно; `TELEGRAM_BOT_SETUP.md` і весь `task_description/warehouse/`
+  (окремий непов'язаний застосунок) прибрано з git (`git rm --cached`) і
+  додано в `.gitignore`, але лишено на диску. Заразом виправлено сам
+  `.gitignore` — рядок `task_description/` знято (він не діяв на вже
+  затрекані файли, але тихо виключав би з git будь-які НОВІ файли в
+  цій директорії, а саме туди ця сесія вносить правки) і замінено
+  точковими правилами; знято й застарілий рядок `DJANGO_CODING_GUIDE.md`
+  (файл активно трекається). Побічно знайдено й виправлено: корінний
+  `readme.md` існував порожнім (0 байт, трекався в нижньому регістрі) —
+  перейменовано в `README.md` і заповнено реальним змістом (стек,
+  посилання на документацію, локальний/прод запуск).
+  `task_description/CLAUDE.md` описував ФРОНТЕНД-стек
+  (React/Vite/Tailwind) у бекенд-репозиторії (copy-paste з іншого репо)
+  — переписано під Django/DRF. `task_description/TASK.md` і
+  `TASK_template.md` були шаблонами чужого старого проєкту (CBV,
+  Bootstrap5, django-crispy-forms, django-filter, apps
+  `transport/warehouse/shipment`) — переписано під реальний
+  ViewSet/serializer-патерн і реальні apps. `DJANGO_CODING_GUIDE.md`
+  отримав клікабельний зміст (якорі `#faza-N` на всі 12+1 фаз) і нову
+  `Фазу 13` — раніше зовсім не задокументований Admin API для `/panel`
+  (`AdminUserViewSet`, `IsHeadOnly`, комміт `507f70c`); розділ "Що
+  далі" виправлено — Docker/CI-CD там значились як майбутні кроки, хоча
+  реально вже задеплоєні (`Dockerfile`, `docker-compose.yml`,
+  `.github/workflows/deploy.yml`). Історію git не переписували
+  (`filter-repo`/force-push) — секретів у видалених з трекання файлах
+  не знайдено, лише зупинили подальше трекання.
 
 ## Наступні кроки
 
@@ -269,7 +300,10 @@ Backend (`vehicle_tracker_api`, Django/DRF) розгорнутий на Raspberr
 - Отримати від ІТ оновлений ЄСП/ОПТ `.xls`-зразок із доданою колонкою
   `name_store` (Q2) — без нього Крок 16.8 п.3 (перевірка на реальному
   файлі) неможливо пройти до кінця, лише перевірити, що
-  `HeaderMismatchError` коректно ловить розбіжність.
+  `HeaderMismatchError` коректно ловить розбіжність. Старі зразки
+  (`task_description/file_1C/`) видалені з диска 06.09 (наведення ладу
+  в git) — новий зразок при отриманні класти поза git-трекінгом
+  (директорія вже в `.gitignore`, якщо створити її знову).
 - Перевірити інші таблиці на той самий розсинхрон sequence/MAX(id), що
   щойно знайшли в `drivers`/`cars` (інцидент №2 вище) — перевірено
   вибірково лише 4 таблиці (`auth_user`, `profiles`, `drivers`, `cars`),

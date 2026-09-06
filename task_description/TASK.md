@@ -7,14 +7,14 @@
 
 ## Metadata
 
-| Поле           | Значення                                      |
-|----------------|-----------------------------------------------|
-| Проект         | Expenses                                      |
-| Тип            | Bug / Enhancement / New Feature / Refactor    |
-| Пріоритет      | Low / Medium / High / Critical                |
-| Статус         | Todo / In Progress / Review / Done            |
-| App(s)         | transport / warehouse / shipment / accounts   |
-| Складність     | S / M / L / XL                                |
+| Поле       | Значення                                                          |
+|------------|--------------------------------------------------------------------|
+| Проект     | Vehicle Cost Tracker                                              |
+| Тип        | Bug / Enhancement / New Feature / Refactor                        |
+| Пріоритет  | Low / Medium / High / Critical                                    |
+| Статус     | Todo / In Progress / Review / Done                                |
+| App(s)     | accounts / cars / products / customers / waybills / logistics / analytics |
+| Складність | S / M / L / XL                                                    |
 
 ---
 
@@ -29,7 +29,7 @@
 <!-- Детальний опис завдання:
 - Що зараз є (поточна поведінка)
 - Що повинно бути (очікувана поведінка)
-- Які файли/моделі/views зачеплені
+- Які моделі/serializers/views зачеплені
 -->
 
 ---
@@ -42,23 +42,23 @@
 
 ## Технічні вимоги
 
-### Backend
-- [ ] CBV (ListView / CreateView / UpdateView / DeleteView / TemplateView)
-- [ ] ModelForm з django-crispy-forms + bootstrap5
-- [ ] Валідація в `clean()` / `clean_<field>()`
-- [ ] `on_delete=PROTECT` або `SET_NULL` (не CASCADE!)
+### Backend (Django + DRF)
+- [ ] `viewsets.ModelViewSet` + `DefaultRouter`, не function-based views
+- [ ] `get_permissions()` за роллю (класи з `apps/accounts/permissions.py`)
+- [ ] `ModelSerializer` з явним `fields`/`read_only_fields`
+- [ ] `on_delete=PROTECT` або `SET_NULL` (не `CASCADE` без потреби)
 - [ ] `DecimalField` для фінансових даних
-- [ ] Docstrings для всіх нових функцій і класів
+- [ ] `verbose_name`/`help_text` українською на нових полях моделі
 
-### Frontend
-- [ ] Bootstrap 5 стилізація
-- [ ] Django messages (success/error)
-- [ ] Адаптивна верстка
-- [ ] Фільтри через django-filter (якщо список)
+### Frontend (окремий репозиторій `vehicle_cost_tracker`)
+- [ ] Функціональний компонент (FC) з типізованими пропсами
+- [ ] Дані через хук на TanStack Query (`src/hocks/`)
+- [ ] Tailwind CSS, без окремих CSS-файлів
+- [ ] Мобільна адаптація (мін. 44px touch targets)
 
 ### URLs
-- [ ] Namespace: `app_name:action_name`
-- [ ] Зареєструвати в головному `expenses/urls.py` (якщо новий app)
+- [ ] `DefaultRouter` у `apps/<app>/urls.py`
+- [ ] Підключити в `config/urls.py`, якщо новий застосунок
 
 ### Міграції
 - [ ] `python manage.py makemigrations` після зміни моделей
@@ -71,8 +71,7 @@
 - [ ] ...
 - [ ] ...
 - [ ] `ruff check .` — 0 помилок
-- [ ] Pre-commit hooks проходять
-- [ ] Функціонал протестовано вручну
+- [ ] `python manage.py check` — чисто
 
 ---
 
@@ -82,4 +81,5 @@
 - [ ] `ruff check .` та `ruff format .` — чисто
 - [ ] Міграції створені та застосовані
 - [ ] Немає регресій в інших модулях
-- [ ] Коміт за Conventional Commits: `feat(app): description`
+- [ ] Коміт зі стислим змістовним описом "чому" (проєкт не дотримується
+      суворо Conventional Commits — див. `AGENTS_GLOBAL.md` §7)

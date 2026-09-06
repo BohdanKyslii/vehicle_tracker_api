@@ -22,8 +22,11 @@ staticfiles/
 
 # AI Agent Contexts
 junie_context/
-task_description/
+task_description/warehouse/
+task_description/file_1C/
 
-# work instruction
-DJANGO_CODING_GUIDE.md
+# Ops-нотатки, не для прод-репо
+TELEGRAM_BOT_SETUP.md
+
+# Environment (продовження)
 .env.production

@@ -4,6 +4,34 @@
 
 ---
 
+## Зміст
+
+| Фаза | Що робимо | Статус |
+|---|---|---|
+| [Фаза 1](#faza-1) | Ініціалізація Django-проєкту | ✅ |
+| [Фаза 2](#faza-2) | Структура застосунків (apps) | ✅ |
+| [Фаза 3](#faza-3) | Моделі (таблиці БД) | ✅ |
+| [Фаза 4](#faza-4) | Міграції | ✅ |
+| [Фаза 4.5](#faza-4-5) | Авторизація користувачів | ✅ |
+| [Фаза 5](#faza-5) | Django Admin | ✅ |
+| [Фаза 6](#faza-6) | Серіалізатори (JSON ↔ Model) | ✅ |
+| [Фаза 7](#faza-7) | Views та urls | ✅ |
+| [Фаза 8](#faza-8) | Views та urls для products/customers/waybills | ✅ |
+| [Фаза 9](#faza-9) | Ролі та права доступу для автопарку | ✅ |
+| [Фаза 10](#faza-10) | CRUD автопарку для логіста | ✅ |
+| [Фаза 11](#faza-11) | `apps/logistics` — найманий транспорт і служби доставки | ✅ |
+| [Фаза 12](#faza-12) | Імпорт накладних з 1С (РУБІН/ЄСП/ОПТ) | ✅ |
+| [Фаза 13](#faza-13) | Admin API для `/panel` (керування користувачами) | ✅ |
+| [Що далі](#що-далі) | Вже зроблене поза фазами (Docker/CI-CD) + реальні наступні кроки | — |
+
+> Якорі (`#faza-N`) розраховані на GitHub/VS Code рендер markdown із
+> `id`-атрибутами в HTML-тегах — клік по фазі в змісті одразу веде на
+> її заголовок нижче в цьому ж файлі.
+
+---
+
+<a id="faza-1"></a>
+
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 1 — ІНІЦІАЛІЗАЦІЯ DJANGO ПРОЄКТУ
 # ═══════════════════════════════════════════════════════════
@@ -349,6 +377,8 @@ python manage.py dbshell
 
 ---
 
+<a id="faza-2"></a>
+
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 2 — СТРУКТУРА ЗАСТОСУНКІВ (APPS)
 # ═══════════════════════════════════════════════════════════
@@ -476,6 +506,8 @@ INSTALLED_APPS = [
 ```
 
 ---
+
+<a id="faza-3"></a>
 
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 3 — МОДЕЛІ (ТАБЛИЦІ БД)
@@ -1494,6 +1526,8 @@ class MonthlyCosts(models.Model):
 
 ---
 
+<a id="faza-4"></a>
+
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 4 — МІГРАЦІЇ
 # ═══════════════════════════════════════════════════════════
@@ -1537,6 +1571,8 @@ python manage.py dbshell
 ```
 
 ---
+
+<a id="faza-4-5"></a>
 
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 4.5 — АВТОРИЗАЦІЯ КОРИСТУВАЧІВ
@@ -1806,6 +1842,8 @@ permission-класи; **поки не підключені до жодного 
 
 ---
 
+<a id="faza-5"></a>
+
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 5 — DJANGO ADMIN
 # ═══════════════════════════════════════════════════════════
@@ -1960,6 +1998,8 @@ python manage.py runserver
 Увійди і перевір що всі моделі відображаються.
 
 ---
+
+<a id="faza-6"></a>
 
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 6 — СЕРІАЛІЗАТОРИ (JSON ↔ Model)
@@ -2161,6 +2201,8 @@ class CarStatusLogSerializer(serializers.ModelSerializer):
 ```
 
 ---
+
+<a id="faza-7"></a>
 
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 7 — VIEWS ТА URLS
@@ -2396,6 +2438,8 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/cars/" -Method GET
 ```
 
 ---
+
+<a id="faza-8"></a>
 
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 8 — VIEWS ТА URLS ДЛЯ PRODUCTS, CUSTOMERS, WAYBILLS
@@ -2777,6 +2821,8 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/waybill-records/unassigned/" -
 
 ---
 
+<a id="faza-9"></a>
+
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 9 — РОЛІ ТА ПРАВА ДОСТУПУ ДЛЯ АВТОПАРКУ
 # ═══════════════════════════════════════════════════════════
@@ -2961,6 +3007,8 @@ class RouteEventViewSet(viewsets.ModelViewSet):
 
 ---
 
+<a id="faza-10"></a>
+
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 10 — CRUD АВТОПАРКУ ДЛЯ ЛОГІСТА
 # ═══════════════════════════════════════════════════════════
@@ -3076,6 +3124,8 @@ endpoint'у на бекенді. `RouteEvent` (Фаза 3.7) вже має по�
 з'явився новий тип даних.
 
 ---
+
+<a id="faza-11"></a>
 
 # ═══════════════════════════════════════════════════════════
 # ФАЗА 11 — APPS/LOGISTICS: НАЙМАНИЙ ТРАНСПОРТ І СЛУЖБИ ДОСТАВКИ
@@ -3615,6 +3665,8 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/carrier-costs/" -Method GET
 > в БД накопичиться реальна історія — див. Крок 14 нижче.
 
 ---
+
+<a id="faza-12"></a>
 
 # ФАЗА 12 — ІМПОРТ НАКЛАДНИХ З 1С (РУБІН/ЄСП/ОПТ)
 
@@ -4307,24 +4359,149 @@ python manage.py runserver
 
 ---
 
+<a id="faza-13"></a>
+
+# ═══════════════════════════════════════════════════════════
+# ФАЗА 13 — ADMIN API ДЛЯ /PANEL (КЕРУВАННЯ КОРИСТУВАЧАМИ)
+# ═══════════════════════════════════════════════════════════
+
+Панель для `head` — підтвердження заявок на реєстрацію (з вибором
+ролі), зміна ролі вже активного користувача, відхилення заявки,
+перегляд/об'єднання Telegram-прив'язки. Дублює те, що вміє
+Telegram-бот (`apps/accounts/bot.py`), але через звичайний
+HTTP API для веб-панелі, а не тільки з Telegram.
+
+## Крок 13.1 — Permission `IsHeadOnly`
+
+```python
+# apps/accounts/permissions.py
+class IsHeadOnly(HasRole):
+    """
+    Лише head, без 'menedzher/logist' — на відміну від IsManagerOrHead.
+    Для операцій, де розширений доступ був би зміною прав доступу самих
+    користувачів (ролі, підтвердження реєстрацій, Telegram-лінкування).
+    """
+    allowed_roles = ('head',)
+```
+
+## Крок 13.2 — `AdminUserSerializer`
+
+```python
+# apps/accounts/serializers.py
+class AdminUserSerializer(serializers.ModelSerializer):
+    # role — джерело profile.role: DRF сам розгортає dotted source,
+    # тож PATCH {"role": "...", "is_active": true} апрувить заявку
+    # одним запитом.
+    role = serializers.ChoiceField(source="profile.role", choices=Profile.Role.choices, required=False)
+    phone = serializers.CharField(source="profile.phone", read_only=True)
+    telegram_id = serializers.IntegerField(source="profile.telegram_id", read_only=True, allow_null=True)
+    driver_id = serializers.IntegerField(source="profile.driver_id", read_only=True, allow_null=True)
+    driver_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id", "username", "email", "is_active", "date_joined",
+            "role", "phone", "telegram_id", "driver_id", "driver_name",
+        )
+        read_only_fields = ("username", "email", "date_joined")
+
+    def get_driver_name(self, obj):
+        driver = getattr(obj.profile, "driver", None)
+        return driver.name_driver if driver else None
+```
+
+## Крок 13.3 — `AdminUserViewSet`
+
+Навмисно **без** `CreateModelMixin` — акаунти створюються лише через
+`/auth/register/` або бота, не з панелі. `queryset` фільтрує
+`profile__isnull=False`, щоб не показувати "сирі" Django-суперюзери
+(вхід у `/admin/`), які не мають `Profile`.
+
+```python
+# apps/accounts/views.py
+class AdminUserViewSet(
+    mixins.ListModelMixin, mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin, mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    queryset = (
+        User.objects.filter(profile__isnull=False)
+        .select_related("profile", "profile__driver")
+        .order_by("-date_joined")
+    )
+    serializer_class = AdminUserSerializer
+    permission_classes = [IsAuthenticated, IsHeadOnly]
+
+    def perform_destroy(self, instance):
+        # Дозволяємо видаляти лише непідтверджені заявки — щоб випадкове
+        # натискання не знесло вже робочий акаунт замість деактивації.
+        if instance.is_active:
+            raise ValidationError({"error": "Можна відхилити лише непідтверджену заявку."})
+        instance.delete()
+
+    @action(detail=True, methods=["post"], url_path="link-telegram")
+    def link_telegram(self, request, pk=None):
+        """POST /api/users/{id}/link-telegram/ — {"source_user_id": <id>}"""
+        # Джерело обмежене непідтвердженою Telegram-заявкою
+        # (is_active=False, username "tg_<id>") — об'єднання з довільним
+        # активним акаунтом непередбачувано зачепило б і його Driver.
+        ...  # повний код — apps/accounts/views.py
+```
+
+## Крок 13.4 — `urls.py`
+
+```python
+# apps/accounts/urls.py
+router = DefaultRouter()
+router.register(r"users", views.AdminUserViewSet, basename="users")
+
+urlpatterns = [
+    path("auth/csrf/", views.csrf),
+    path("auth/register/", views.register),
+    path("auth/login/", views.login_view),
+    path("auth/logout/", views.logout_view),
+    path("auth/me/", views.me),
+    path("auth/telegram/", views.telegram_login),
+] + router.urls
+```
+
+`GET/PATCH/DELETE /api/users/{id}/` і `POST /api/users/{id}/link-telegram/`
+доступні лише `head` (`IsHeadOnly`); без авторизації — `403`, як і всюди
+в проєкті.
+
+---
+
+<a id="що-далі"></a>
+
 # ═══════════════════════════════════════════════════════════
 # ЩО ДАЛІ
 # ═══════════════════════════════════════════════════════════
 
-## Наступні кроки:
+## Вже зроблено (раніше тут значилось як "наступні кроки"):
 
-~~### Крок 11 — Завантаження реальних даних із 1С (management command)~~
-Зроблено інакше, ніж тут спершу планувалось: не CLI-команда, а
-upload-ендпоінт із формою на фронтенді — менеджер сам вивантажує файл
-раз на тиждень (§1 `IMPORT_1C_SPEC.md`), а не адмін через консоль.
-Готово в **Фазі 12** вище (Кроки 16.1-16.8).
-### Крок 12 — Docker + розгортання на Raspberry Pi
-### Крок 13 — GitHub Actions CI/CD
-### Крок 14 — Підключення products/customers/waybills до реального React
+- ~~Крок 11 — Завантаження реальних даних із 1С (management command)~~ —
+  зроблено інакше, ніж тут спершу планувалось: не CLI-команда, а
+  upload-ендпоінт із формою на фронтенді — менеджер сам вивантажує файл
+  раз на тиждень (§1 `IMPORT_1C_SPEC.md`). Готово в **Фазі 12** вище.
+- ~~Docker + розгортання на Raspberry Pi~~ — `Dockerfile` +
+  `docker-compose.yml` у корені репозиторію (сервіси `api`+`bot`,
+  `network_mode: host`), задеплоєно на Pi (`warehouse.mom`).
+- ~~GitHub Actions CI/CD~~ — `.github/workflows/deploy.yml`: push у
+  `main` → SSH через `cloudflared` тунель на Pi → `git pull` +
+  `docker compose up -d --build`.
+- ~~Admin API для `/panel`~~ — готово в **Фазі 13** вище.
+
+## Реальні наступні кроки:
+
+### Підключення products/customers/waybills до реального React
 Cars/Drivers/RouteEvents (Фази 6-10) вже підключені й живі в проді —
 цей крок лишається тільки для products/customers/waybill-records
 (Фаза 8), коли з'явиться відповідний UI на фронтенді
 (`VITE_USE_MOCK=false`).
+### `apps/analytics`
+Свідомо порожній — розрахунки собівартості й порівняння каналів
+доставки, коли в БД накопичиться достатньо реальної історії.
 
 ---
 

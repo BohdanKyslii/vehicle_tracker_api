@@ -2,7 +2,7 @@
 
 ## Metadata
 
-- **Project**: Rubin Customer Management System
+- **Project**: Vehicle Cost Tracker
 - **Type**: [Баг / Покращення / Новий функціонал]
 - **Priority**: [Low / Medium / High / Critical]
 - **Status**: Pending
@@ -36,33 +36,36 @@
 
 ## 2. Технічні Вимоги та Рекомендації
 
-### Backend (Django)
+### Backend (Django + DRF)
 
-- **Views:** Використовуй Class-Based Views (CBV)
-- **Mixins:** Перевірка прав доступу через існуючі міксини (наприклад,
-  `OnlyForStaffMixin`)
-- **Forms:** `ModelForm` з `django-crispy-forms` (bootstrap5)
-- **Models:** `on_delete=models.PROTECT` або `SET_NULL` для Foreign Keys
+- **Views:** `viewsets.ModelViewSet` + `DefaultRouter`, не function-based views
+- **Права доступу:** `get_permissions()` за роллю через класи з
+  `apps/accounts/permissions.py` (`IsAuthenticated`, `IsManagerOrHead`,
+  `IsManagerOrHeadOnly`, `IsLogistOrAbove`, `IsHeadOnly`)
+- **Serializers:** `ModelSerializer` з явним `fields`
+- **Models:** `on_delete=models.PROTECT` або `SET_NULL` для Foreign Keys,
+  явний `db_table`, `verbose_name`/`help_text` українською
 
-### Frontend
+### Frontend (окремий репозиторій `vehicle_cost_tracker`)
 
-- **UI:** Дотримуйся стилістики проекту на базі Bootstrap 5
-- **UX:** Додай повідомлення про успіх або помилку (Django messages)
-- **Responsive:** Коректне відображення на мобільних пристроях
+- **UI:** Tailwind CSS, функціональні компоненти з TypeScript
+- **Дані:** TanStack Query (`src/hocks/`), не прямі `fetch` у компонентах
+- **Responsive:** мобільна адаптація, мін. 44px touch targets
 
 ### Дотримуйся правил з `AGENTS_GLOBAL.md`:
 
-- Патерни CBV
-- Правила іменування (Naming conventions)
+- ViewSet/serializer патерни
+- Ексклюзивність каналів доставки (`own`/`hired`/`carrier`)
 - Code style (Ruff)
 
 ---
 
-## 3. Тестування та Валідація (pytest)
+## 3. Тестування та Валідація
 
-- [ ] Написати Unit tests для нових/змінених моделей
-- [ ] Написати View tests для перевірки прав доступу та логіки відображення
-- [ ] Перевірити роботу форми (валідація полів)
+- [ ] Перевірити права доступу за роллю (401/403 без авторизації —
+      див. примітку в `AGENTS_GLOBAL.md` про `403` замість `401`)
+- [ ] Перевірити роботу серіалізатора (валідація полів)
+- [ ] `python manage.py check` — чисто
 
 ---
 
@@ -72,6 +75,5 @@
 
 - [ ] Всі критерії приймання виконані
 - [ ] Код проходить `ruff check` та `ruff format`
-- [ ] Всі тести (існуючі та нові) проходять успішно (`pytest`)
-- [ ] Протестовано на мобільних пристроях
+- [ ] Міграції створені й накочені (якщо змінювались моделі)
 - [ ] Немає регресій в існуючому функціоналі

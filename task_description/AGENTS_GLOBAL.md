@@ -101,11 +101,11 @@ src/
 
 ```
 apps/
-├── accounts/     # Profile (ролі), Telegram-бот, авторизація
+├── accounts/     # Profile (ролі), Telegram-бот, авторизація, admin API /panel
 ├── cars/          # Car, Driver, RouteEvent, MonthlyCosts (Фаза 6-7, задеплоєно)
 ├── products/      # Product, ProductCategory, ProductLogistics
 ├── customers/     # Customer, Store, StoreDeliveryAddress
-├── waybills/      # WaybillRecord (реєстр накладних із 1С)
+├── waybills/      # WaybillRecord + імпорт з 1С (`/import_file/`, Фаза 12, готово)
 ├── logistics/     # HiredTransportTrip, CarrierShipment/CarrierCost (Фаза 11, готово)
 └── analytics/     # ⏳ порожньо, свідомо
 ```
@@ -130,8 +130,9 @@ apps/
 ### 5.4 Django / DRF
 - ViewSets (`viewsets.ModelViewSet`) + `DefaultRouter`, не function-based views.
 - `get_permissions()` для рольового розмежування читання/запису
-  (`IsAuthenticated`, `IsManagerOrHead`, `IsLogistOrAbove` —
-  `apps/accounts/permissions.py`).
+  (`IsAuthenticated`, `IsManagerOrHead`, `IsManagerOrHeadOnly`,
+  `IsLogistOrAbove`, `IsHeadOnly` — `apps/accounts/permissions.py`,
+  кожен клас має докстрінг з поясненням, чому саме ці ролі).
 - `verbose_name`/`help_text` українською на кожному полі моделі.
 - `db_table` — явний `snake_case`, не покладатись на Django-дефолт.
 
@@ -174,11 +175,11 @@ functionality...`, `docs: ...`) — орієнтуйся на стислий, з
 | Питання | Де дивитись |
 |---|---|
 | Бізнес-логіка, ролі, БД-схема, TS-типи | `task_description/transport/01-08_*.md` (звірено з кодом 2026-08-24) |
-| Покроковий процес розробки бекенду | `DJANGO_CODING_GUIDE.md` (Фаза 1-11) |
+| Покроковий процес розробки бекенду | `DJANGO_CODING_GUIDE.md` (Фаза 1-12, зі змістом на початку файлу) |
 | Покроковий процес розробки фронтенду | `vehicle_cost_tracker/CODING_GUIDE.md` (Фаза 1-16) |
 | Поточний прогрес, живі інциденти | `task_description/STATE.md` |
-| Формат імпорту з 1С (Крок 11, у роботі) | `task_description/IMPORT_1C_SPEC.md` |
-| Telegram-бот, деплой | `TELEGRAM_BOT_SETUP.md` |
+| Формат імпорту з 1С (реалізовано, Фаза 12) | `task_description/IMPORT_1C_SPEC.md` |
+| Telegram-бот, деплой | `TELEGRAM_BOT_SETUP.md` (локальний файл, не в git з 2026-09-06) |
 
 > Обидва `*_CODING_GUIDE.md` — сценарії для ручного набору коду
 > ("пиши руками"), **не changelog**: перевіряй, що файл справді існує,
@@ -187,4 +188,5 @@ functionality...`, `docs: ...`) — орієнтуйся на стислий, з
 
 > ⚠️ `task_description/warehouse/` — **не цей проєкт**. Окремий,
 > непов'язаний Django-застосунок (облік складських витрат), запланований
-> на майбутнє, коду якого в цьому репозиторії немає.
+> на майбутнє, коду якого в цьому репозиторії немає. З 2026-09-06 не в
+> git (`.gitignore`) — лишається лише локально в кого вже є на диску.
