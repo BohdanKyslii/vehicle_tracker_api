@@ -8,22 +8,35 @@ from .matching import MatchingCache
 from .models import WaybillRecord
 
 
-def link_own_channel_from_scans(waybill_numbers: set[str], legal_entity: str) -> int:
+def link_waybill_to_own_channel(waybill_number: str, car_id: int) -> int:
     """
-    Автопризначення каналу "own" за вже наявними сканами водіїв.
+    Bulk-виставляє delivery_channel="own"+assigned_car на всі рядки
+    цієї накладної, ЯКЩО їй ще не призначено канал (та сама
+    ексклюзивність, що й скрізь у apps.waybills/apps.logistics). Не
+    матчить по legal_entity — формати номерів (з нулями/без) уже й так
+    розрізняють джерела, колізія між ними по суті неможлива.
 
-    Порядок подій у цьому бізнесі ЗВОРОТНИЙ до того, що можна було б
-    очікувати: водій сканує накладну щодня одразу як забирає товар
-    (створюючи RouteEvent із waybill_number), а WaybillRecord
-    з'являється в БД лише коли менеджер довантажить реєстр із 1С —
-    раз на 2-4 тижні. Тобто на момент скану WaybillRecord ще не існує
-    (призначити канал одразу неможливо), а на момент імпорту скан уже
-    ДАВНО існує. Тому лінкування робимо тут — одразу після імпорту,
-    зіставляючи щойно створені WaybillRecord з уже наявними сканами.
+    Спільна для ОБОХ напрямків гонитви скан↔імпорт (див.
+    `link_own_channel_from_scans` і `apps.cars.views.RouteEventViewSet`):
+    порядок подій у цьому бізнесі може бути будь-яким — здебільшого
+    водій сканує ЩОДНЯ, а менеджер довантажує реєстр із 1С раз на
+    2-4 тижні (скан раніше за WaybillRecord), але буває й навпаки
+    (накладна вже імпортована, а скан водія прилітає пізніше/його
+    правлять вручну в EventDetail/EventAdminForm).
+    """
+    if not waybill_number:
+        return 0
+    return WaybillRecord.objects.filter(
+        waybill_number=waybill_number,
+        delivery_channel__isnull=True,
+    ).update(delivery_channel=WaybillRecord.DeliveryChannel.OWN, assigned_car_id=car_id)
 
-    Не займає накладні, яким канал уже призначено (ручний assign-channel
-    або попередній лінк) — той самий принцип ексклюзивності, що й
-    скрізь у apps.waybills/apps.logistics.
+
+def link_own_channel_from_scans(waybill_numbers: set[str]) -> int:
+    """
+    Автопризначення каналу "own" за вже наявними сканами водіїв —
+    напрямок "скан був раніше за імпорт" (типовий випадок, викликається
+    з `import_waybills` одразу після вставки нових рядків).
     """
     if not waybill_numbers:
         return 0
@@ -44,17 +57,10 @@ def link_own_channel_from_scans(waybill_numbers: set[str], legal_entity: str) ->
     for number, car_id in scans:
         car_by_number.setdefault(number, car_id)
 
-    linked = 0
-    for number, car_id in car_by_number.items():
-        linked += WaybillRecord.objects.filter(
-            legal_entity=legal_entity,
-            waybill_number=number,
-            delivery_channel__isnull=True,
-        ).update(
-            delivery_channel=WaybillRecord.DeliveryChannel.OWN, assigned_car_id=car_id
-        )
-
-    return linked
+    return sum(
+        link_waybill_to_own_channel(number, car_id)
+        for number, car_id in car_by_number.items()
+    )
 
 
 def import_waybills(legal_entity: str, rows: list[ParsedRow]) -> dict:
@@ -111,10 +117,7 @@ def import_waybills(legal_entity: str, rows: list[ParsedRow]) -> dict:
 
         WaybillRecord.objects.bulk_create(records)
 
-        linked = link_own_channel_from_scans(
-            {row.waybill_number for row in rows},
-            legal_entity,
-        )
+        linked = link_own_channel_from_scans({row.waybill_number for row in rows})
 
     return {
         "batch_id": batch_id,

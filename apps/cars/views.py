@@ -1,6 +1,10 @@
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from apps.accounts.permissions import IsLogistOrAbove, IsManagerOrHead
+from apps.waybills.importing import link_waybill_to_own_channel
 
 from .models import Car, CarStatusLog, Driver, MonthlyCosts, RouteEvent
 from .serializers import (
@@ -11,10 +15,9 @@ from .serializers import (
     RouteEventCreateSerializer,
     RouteEventSerializer,
 )
-from apps.accounts.permissions import IsManagerOrHead, IsLogistOrAbove
-from rest_framework.permissions import IsAuthenticated
 
 WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
+
 
 class CarViewSet(viewsets.ModelViewSet):
     """
@@ -55,7 +58,11 @@ class CarViewSet(viewsets.ModelViewSet):
         serializer = CarStatusLogSerializer(logs, many=True)
         return Response(serializer.data)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsManagerOrHead])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsManagerOrHead],
+    )
     def change_status(self, request, pk=None):
         """POST /api/cars/{id}/change_status/ — змінити статус."""
         car = self.get_object()
@@ -92,11 +99,8 @@ class DriverViewSet(viewsets.ModelViewSet):
         """GET /api/drivers/me/ — водій поточної сесії (Profile.driver)."""
         profile = getattr(request.user, "profile", None)
         if not profile or not profile.driver_id:
-            return Response(
-                {
-                    "error": "Профіль не прив'язаний до картки водія — зверніться до диспетчера"},
-                status=404,
-            )
+            msg = "Профіль не прив'язаний до картки водія — зверніться до диспетчера"
+            return Response({"error": msg}, status=404)
         return Response(DriverSerializer(profile.driver).data)
 
     def get_permissions(self):
@@ -131,6 +135,7 @@ class RouteEventViewSet(viewsets.ModelViewSet):
             qs = qs.filter(car__id=car_id)
         if date == "today":
             from django.utils import timezone
+
             qs = qs.filter(event_ts__date=timezone.localdate())
         elif date:
             qs = qs.filter(event_ts__date=date)
@@ -140,9 +145,32 @@ class RouteEventViewSet(viewsets.ModelViewSet):
         """Водій не може підписати подію на іншого водія — driver форсується з сесії."""
         profile = getattr(self.request.user, "profile", None)
         if profile and profile.role == "driver":
-            serializer.save(driver_id=profile.driver_id, car_id=profile.driver.car_id)
+            instance = serializer.save(
+                driver_id=profile.driver_id, car_id=profile.driver.car_id
+            )
         else:
-            serializer.save()
+            instance = serializer.save()
+        self._link_own_channel_if_delivery(instance)
+
+    def perform_update(self, serializer):
+        """
+        Номер накладної в події скану можна виправити вручну
+        (EventDetail/EventAdminForm) — якщо після правки з'явився
+        waybill_number, який досі не мав каналу, теж лінкуємо.
+        """
+        instance = serializer.save()
+        self._link_own_channel_if_delivery(instance)
+
+    @staticmethod
+    def _link_own_channel_if_delivery(event: RouteEvent) -> None:
+        """
+        Другий, зворотний напрямок гонитви скан↔імпорт: якщо
+        WaybillRecord цієї накладної вже існує (імпортований раніше за
+        цей скан) і ще не має каналу — призначаємо тут-таки, а не лише
+        при наступному імпорті (`apps.waybills.importing`).
+        """
+        if event.event_type == RouteEvent.EventType.DELIVERY and event.waybill_number:
+            link_waybill_to_own_channel(event.waybill_number, event.car_id)
 
     @action(detail=False, methods=["get"])
     def last_odometer(self, request):
