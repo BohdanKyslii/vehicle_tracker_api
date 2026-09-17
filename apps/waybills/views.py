@@ -133,7 +133,8 @@ class WaybillRecordViewSet(viewsets.ModelViewSet):
             .values_list("waybill_number", flat=True)
             .distinct()
         )
-        if request.query_params.get("dry_run") == "true":
+        dry_run = request.query_params.get("dry_run") or request.data.get("dry_run")
+        if dry_run == "true" or dry_run is True:
             from apps.cars.models import RouteEvent
 
             matched = (
