@@ -25,6 +25,7 @@ WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 # наступного запиту — "is an aggregate" на другому виклику) — кожен
 # виклик summary() мусить отримати свіжий екземпляр.
 _MONEY_FIELD = DecimalField(max_digits=14, decimal_places=2)
+_QTY_FIELD = DecimalField(max_digits=10, decimal_places=3)
 
 
 def _shipment_total():
@@ -43,6 +44,17 @@ def _return_total():
             When(quantity__lt=0, then="total_uah"),
             default=Value(0),
             output_field=_MONEY_FIELD,
+        )
+    )
+
+
+def _shipped_qty_total():
+    """Сума кількості лише по рядках-відвантаженнях (quantity > 0) — для аналітики."""
+    return Sum(
+        Case(
+            When(quantity__gt=0, then="quantity"),
+            default=Value(0),
+            output_field=_QTY_FIELD,
         )
     )
 
@@ -194,6 +206,7 @@ class WaybillRecordViewSet(viewsets.ModelViewSet):
             lines_count=Count("id"),
             shipped_uah=_shipment_total(),
             returned_uah=_return_total(),
+            shipped_qty=_shipped_qty_total(),
             weight_kg_sum=Sum("total_weight_kg"),
         )
 
