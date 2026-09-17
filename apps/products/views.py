@@ -1,12 +1,16 @@
-from rest_framework import viewsets, filters
+from django.db.models import Q
+from rest_framework import filters, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from apps.accounts.permissions import IsManagerOrHead
 
 from .models import Product, ProductCategory
-from .serializers import ProductSerializer, ProductCategorySerializer
+from .serializers import ProductCategorySerializer, ProductSerializer
 
 WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
+
 
 class ProductCategoryViewSet(viewsets.ModelViewSet):
     """CRUD для категорій товарів (з ієрархією parent/children)."""
@@ -29,6 +33,7 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
         if self.action in WRITE_ACTIONS:
             return [IsAuthenticated(), IsManagerOrHead()]
         return [IsAuthenticated()]
+
 
 class ProductViewSet(viewsets.ModelViewSet):
     """CRUD для товарів, разом із вкладеною логістикою (вага/габарити)."""
@@ -56,3 +61,36 @@ class ProductViewSet(viewsets.ModelViewSet):
         if self.action in WRITE_ACTIONS:
             return [IsAuthenticated(), IsManagerOrHead()]
         return [IsAuthenticated()]
+
+    @action(detail=False, methods=["get"])
+    def missing_logistics_for_own(self, request):
+        """
+        GET /api/products/missing_logistics_for_own/ — товари без ваги
+        (ProductLogistics.unit_weight_kg), які фігурують хоча б в одній
+        накладній каналу "own" (тобто вже реально возились власним
+        авто). Для аналітики "вартість доставки vs вага/об'єм" ці
+        товари треба заповнити вручну — нема жодної формули, яка б їх
+        вивела (importing.py свідомо не вигадує коефіцієнт об'єм→вага).
+        Тимчасовий read-only ендпоінт — прибрати після використання.
+        """
+        products = (
+            Product.objects.filter(waybill_records__delivery_channel="own")
+            .filter(Q(logistics__isnull=True) | Q(logistics__unit_weight_kg__isnull=True))
+            .select_related("category", "logistics")
+            .distinct()
+            .order_by("name_product")
+        )
+        data = [
+            {
+                "id_product": p.id_product,
+                "name_product": p.name_product,
+                "category_name": p.category.name_category if p.category else "",
+                "unit_weight_kg": p.logistics.unit_weight_kg if p.logistics else None,
+                "unit_length_cm": p.logistics.unit_length_cm if p.logistics else None,
+                "unit_width_cm": p.logistics.unit_width_cm if p.logistics else None,
+                "unit_height_cm": p.logistics.unit_height_cm if p.logistics else None,
+                "units_per_box": p.logistics.units_per_box if p.logistics else None,
+            }
+            for p in products
+        ]
+        return Response({"count": len(data), "products": data})
