@@ -11,7 +11,7 @@ from apps.cars.models import Car
 from .importers.base import HeaderMismatchError
 from .importers.esp_opt_xls import parse_esp_opt_xls
 from .importers.rubin_csv import parse_rubin_csv
-from .importing import import_waybills
+from .importing import import_waybills, link_own_channel_from_scans
 from .models import WaybillRecord
 from .serializers import WaybillRecordSerializer
 
@@ -110,6 +110,50 @@ class WaybillRecordViewSet(viewsets.ModelViewSet):
             qs = qs.filter(waybill_date__lte=date_to)
 
         return qs
+
+    @action(
+        detail=False,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsManagerOrHeadOnly],
+    )
+    def backfill_own_channel(self, request):
+        """
+        POST /api/waybill-records/backfill_own_channel/[?dry_run=true] —
+        ОДНОРАЗОВИЙ ручний запуск `link_own_channel_from_scans` проти
+        ВСІХ наразі непризначених накладних (не лише щойно імпортованих,
+        як при звичайному імпорті) — покриває історію, накопичену до
+        того, як з'явився автолінк (2026-09-17). `dry_run=true` тільки
+        рахує, скільки унікальних номерів матчнулось б, нічого не пише.
+        Тимчасовий ендпоінт для одноразового прогону на проді — прибрати
+        після використання (той самий підхід, що одноразові
+        ProductsCleanup-інструменти).
+        """
+        numbers = set(
+            WaybillRecord.objects.filter(delivery_channel__isnull=True)
+            .values_list("waybill_number", flat=True)
+            .distinct()
+        )
+        if request.query_params.get("dry_run") == "true":
+            from apps.cars.models import RouteEvent
+
+            matched = (
+                RouteEvent.objects.filter(
+                    event_type=RouteEvent.EventType.DELIVERY,
+                    waybill_number__in=numbers,
+                )
+                .exclude(waybill_number="")
+                .values_list("waybill_number", flat=True)
+                .distinct()
+            )
+            return Response(
+                {
+                    "unassigned_numbers": len(numbers),
+                    "would_link_numbers": len(set(matched)),
+                }
+            )
+
+        linked = link_own_channel_from_scans(numbers)
+        return Response({"unassigned_numbers": len(numbers), "linked_rows": linked})
 
     @action(detail=False, methods=["get"])
     def unassigned(self, request):
