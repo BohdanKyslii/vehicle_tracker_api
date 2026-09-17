@@ -80,17 +80,23 @@ class ProductViewSet(viewsets.ModelViewSet):
             .distinct()
             .order_by("name_product")
         )
-        data = [
-            {
-                "id_product": p.id_product,
-                "name_product": p.name_product,
-                "category_name": p.category.name_category if p.category else "",
-                "unit_weight_kg": p.logistics.unit_weight_kg if p.logistics else None,
-                "unit_length_cm": p.logistics.unit_length_cm if p.logistics else None,
-                "unit_width_cm": p.logistics.unit_width_cm if p.logistics else None,
-                "unit_height_cm": p.logistics.unit_height_cm if p.logistics else None,
-                "units_per_box": p.logistics.units_per_box if p.logistics else None,
-            }
-            for p in products
-        ]
+        data = []
+        for p in products:
+            # Reverse OneToOne (Product -> ProductLogistics) кидає
+            # RelatedObjectDoesNotExist при доступі, якщо рядка нема —
+            # саме для таких товарів (без логістики) ця вибірка й
+            # існує, тому не можна просто читати p.logistics напряму.
+            logistics = getattr(p, "logistics", None)
+            data.append(
+                {
+                    "id_product": p.id_product,
+                    "name_product": p.name_product,
+                    "category_name": p.category.name_category if p.category else "",
+                    "unit_weight_kg": logistics.unit_weight_kg if logistics else None,
+                    "unit_length_cm": logistics.unit_length_cm if logistics else None,
+                    "unit_width_cm": logistics.unit_width_cm if logistics else None,
+                    "unit_height_cm": logistics.unit_height_cm if logistics else None,
+                    "units_per_box": logistics.units_per_box if logistics else None,
+                }
+            )
         return Response({"count": len(data), "products": data})
