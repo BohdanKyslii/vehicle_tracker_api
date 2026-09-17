@@ -1,7 +1,10 @@
 from django.db import models
+from django.utils.translation import gettext_lazy as _
+
+from apps.cars.models import Car
 from apps.customers.models import Customer, Store
 from apps.products.models import Product
-from django.utils.translation import gettext_lazy as _
+
 
 class WaybillRecord(models.Model):
     """
@@ -151,6 +154,40 @@ class WaybillRecord(models.Model):
         blank=True,
         verbose_name=_("Канал доставки"),
         help_text=_("Канал доставки товару"),
+    )
+
+    # Заповнюється лише для delivery_channel="own" — конкретне авто
+    # власного парку, яке (буде) везе цю накладну. Свідомо без прив'язки
+    # до RouteEvent/водія/дати/одометра — легке "швидке призначення" з
+    # картки накладної, не повноцінний рейс.
+    assigned_car = models.ForeignKey(
+        Car,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_waybill_records",
+        verbose_name=_("Призначене авто"),
+        help_text=_("Авто власного парку для каналу 'Власне авто'"),
+    )
+
+    # Заповнюється лише для delivery_channel="hired" — вільний текст, бо
+    # найманий транспорт не веде облік у довіднику Car (той самий підхід,
+    # що HiredTransportTrip.number_car).
+    hired_car_number = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name=_("Номер авто (найманий транспорт)"),
+        help_text=_("Держ. номер найманого авто для каналу 'Найманий транспорт'"),
+    )
+
+    # Заповнюється лише для delivery_channel="carrier".
+    carrier_ttn = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        verbose_name=_("ТТН служби доставки"),
+        help_text=_("Номер ТТН для каналу 'Служба доставки'"),
     )
 
     imported_at = models.DateTimeField(
