@@ -1,4 +1,4 @@
-from django.db.models import Case, Count, DecimalField, Q, Sum, Value, When
+from django.db.models import Case, Count, DecimalField, F, Q, Sum, Value, When
 from rest_framework import filters, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -26,6 +26,8 @@ WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 # виклик summary() мусить отримати свіжий екземпляр.
 _MONEY_FIELD = DecimalField(max_digits=14, decimal_places=2)
 _QTY_FIELD = DecimalField(max_digits=10, decimal_places=3)
+_WEIGHT_FIELD = DecimalField(max_digits=16, decimal_places=3)
+_VOLUME_FIELD = DecimalField(max_digits=16, decimal_places=6)
 
 
 def _shipment_total():
@@ -55,6 +57,51 @@ def _shipped_qty_total():
             When(quantity__gt=0, then="quantity"),
             default=Value(0),
             output_field=_QTY_FIELD,
+        )
+    )
+
+
+def _shipped_weight_kg_total():
+    """
+    Реальна вага відвантаження = кількість × вага одиниці товару
+    (apps.products.ProductLogistics.unit_weight_kg), рахується тут "на
+    льоту" — WaybillRecord.total_weight_kg НІКОЛИ не заповнюється при
+    імпорті (нема усталеної формули на момент імпорту, дивись коментар
+    в importing.py) і завжди null. Рядки без product або без
+    ProductLogistics.unit_weight_kg дають 0 — вага накладної буде
+    занижена рівно на цю частку, поки довідник товарів не заповнений
+    повністю (2026-09-17: 135 товарів надіслано користувачу ексель-файлом).
+    """
+    return Sum(
+        Case(
+            When(
+                quantity__gt=0,
+                product__logistics__unit_weight_kg__isnull=False,
+                then=F("quantity") * F("product__logistics__unit_weight_kg"),
+            ),
+            default=Value(0),
+            output_field=_WEIGHT_FIELD,
+        )
+    )
+
+
+def _shipped_volume_cbm_total():
+    """Те саме, що вага, але об'єм (м³) = к-сть × Д×Ш×В одиниці / 1_000_000."""
+    return Sum(
+        Case(
+            When(
+                quantity__gt=0,
+                product__logistics__unit_length_cm__isnull=False,
+                product__logistics__unit_width_cm__isnull=False,
+                product__logistics__unit_height_cm__isnull=False,
+                then=F("quantity")
+                * F("product__logistics__unit_length_cm")
+                * F("product__logistics__unit_width_cm")
+                * F("product__logistics__unit_height_cm")
+                / Value(1_000_000),
+            ),
+            default=Value(0),
+            output_field=_VOLUME_FIELD,
         )
     )
 
@@ -207,7 +254,8 @@ class WaybillRecordViewSet(viewsets.ModelViewSet):
             shipped_uah=_shipment_total(),
             returned_uah=_return_total(),
             shipped_qty=_shipped_qty_total(),
-            weight_kg_sum=Sum("total_weight_kg"),
+            weight_kg_sum=_shipped_weight_kg_total(),
+            volume_cbm_sum=_shipped_volume_cbm_total(),
         )
 
         line_type = params.get("line_type")
