@@ -664,6 +664,26 @@ class MonthlyCosts(models.Model):
         help_text=_("Ставка ремонту (грн/км)"),
     )
 
+    # Пальне вноситься помісячно логістом (по паливній картці/звіту), а не
+    # збирається з refuel-подій водія (RouteEvent.fuel_cost_uah) — це два
+    # незалежні джерела: подія водія фіксує конкретну заправку в дорозі,
+    # а тут сумарна місячна вартість, яка й іде в собівартість доставки.
+    fuel_cost_uah = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        verbose_name=_("Пальне (грн)"),
+        help_text=_("Пальне за місяць (грн)"),
+    )
+
+    fuel_liters = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        verbose_name=_("Пальне (л)"),
+        help_text=_("Пальне за місяць (л) — довідково, у вартість не входить"),
+    )
+
     other_costs_uah = models.DecimalField(
         max_digits=10,
         decimal_places=2,

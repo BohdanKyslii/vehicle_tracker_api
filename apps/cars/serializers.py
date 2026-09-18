@@ -130,6 +130,8 @@ class MonthlyCostsSerializer(serializers.ModelSerializer):
             "depreciation_uah",
             "repair_actual_uah",
             "repair_rate_uah_km",
+            "fuel_cost_uah",
+            "fuel_liters",
             "other_costs_uah",
             "other_costs_comment",
             "repair_cost_uah",
@@ -145,12 +147,17 @@ class MonthlyCostsSerializer(serializers.ModelSerializer):
         return float(obj.repair_rate_uah_km) * total_km
 
     def get_total_cost_uah(self, obj):
+        """
+        Разом = ЗП + податки + амортизація + пальне + інші + ремонт.
+        Літри (fuel_liters) — довідкові, у гривневу суму не входять.
+        """
         repair = self.get_repair_cost_uah(obj)
         return (
             float(
                 obj.salary_uah
                 + obj.taxes_uah
                 + obj.depreciation_uah
+                + obj.fuel_cost_uah
                 + obj.other_costs_uah
             )
             + repair
