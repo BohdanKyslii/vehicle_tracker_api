@@ -9,10 +9,10 @@ from rest_framework.response import Response
 
 from apps.accounts.permissions import IsManagerOrHead
 
-from .models import Product, ProductCategory, ProductLogistics
+from .models import Product, ProductCategory
 from .serializers import ProductCategorySerializer, ProductSerializer
 
-WRITE_ACTIONS = ["create", "update", "partial_update", "destroy", "bulk_import_logistics"]
+WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 
 
 class ProductCategoryViewSet(viewsets.ModelViewSet):
@@ -125,68 +125,3 @@ class ProductViewSet(viewsets.ModelViewSet):
                 }
             )
         return Response({"count": len(data), "products": data})
-
-    @action(detail=False, methods=["post"])
-    def bulk_import_logistics(self, request):
-        """
-        ОДНОРАЗОВИЙ імпорт ваги/габаритів з вивантаження 1С
-        (Номенклатура_1С_Магазини). Заповнює ТІЛЬКИ порожні поля
-        ProductLogistics — вже задані значення ніколи не перезаписує.
-        Видалити цей action одразу після використання.
-        """
-        records = request.data.get("records")
-        if not isinstance(records, list):
-            return Response({"error": "'records' має бути списком"}, status=400)
-
-        ids = [r["id_product"] for r in records if "id_product" in r]
-        products = {p.id_product: p for p in Product.objects.filter(id_product__in=ids)}
-        existing_logistics = {
-            pl.product_id: pl
-            for pl in ProductLogistics.objects.filter(product_id__in=products.keys())
-        }
-
-        fields = ["unit_weight_kg", "unit_length_cm", "unit_width_cm", "unit_height_cm"]
-        to_create = []
-        to_update = []
-        filled_counts = dict.fromkeys(fields, 0)
-        skipped_not_found = 0
-        touched_product_ids = set()
-
-        for rec in records:
-            pid = rec.get("id_product")
-            product = products.get(pid)
-            if product is None:
-                skipped_not_found += 1
-                continue
-            logistics = existing_logistics.get(pid)
-            is_new = logistics is None
-            if is_new:
-                logistics = ProductLogistics(product=product)
-            changed = False
-            for field in fields:
-                value = rec.get(field)
-                if value is None:
-                    continue
-                if getattr(logistics, field) is None:
-                    setattr(logistics, field, value)
-                    filled_counts[field] += 1
-                    changed = True
-            if changed:
-                touched_product_ids.add(pid)
-                (to_create if is_new else to_update).append(logistics)
-
-        if to_create:
-            ProductLogistics.objects.bulk_create(to_create)
-        if to_update:
-            ProductLogistics.objects.bulk_update(to_update, fields)
-
-        return Response(
-            {
-                "received": len(records),
-                "skipped_not_found": skipped_not_found,
-                "products_touched": len(touched_product_ids),
-                "created_logistics_rows": len(to_create),
-                "updated_logistics_rows": len(to_update),
-                "fields_filled": filled_counts,
-            }
-        )
