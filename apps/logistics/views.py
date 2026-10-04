@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Count, Max, Min, Sum
 from django.utils.dateparse import parse_date
 from rest_framework import filters, viewsets
 from rest_framework.decorators import action
@@ -110,6 +111,31 @@ class CarrierShipmentViewSet(viewsets.ModelViewSet):
         if self.action in WRITE_ACTIONS:
             return [IsAuthenticated(), IsManagerOrHead()]
         return [IsAuthenticated()]
+
+    def perform_update(self, serializer):
+        """Змінили ТТН — підхоплюємо вартість, що прийшла раніше під новим номером."""
+        shipment = serializer.save()
+        CarrierCost.objects.filter(ttn=shipment.ttn, shipment__isnull=True).update(
+            shipment=shipment
+        )
+
+    def perform_destroy(self, instance):
+        """
+        Прив'язки накладних видаляються каскадом — знімаємо канал "carrier"
+        з накладних, які після цього не лишились у жодній ТТН (як detach_waybill).
+        """
+        numbers = list(instance.waybills.values_list("waybill_number", flat=True))
+        with transaction.atomic():
+            instance.delete()
+            still_linked = set(
+                CarrierShipmentWaybill.objects.filter(
+                    waybill_number__in=numbers
+                ).values_list("waybill_number", flat=True)
+            )
+            WaybillRecord.objects.filter(
+                waybill_number__in=set(numbers) - still_linked,
+                delivery_channel=WaybillRecord.DeliveryChannel.CARRIER,
+            ).update(delivery_channel=None)
 
     @action(
         detail=True,
@@ -245,6 +271,130 @@ class CarrierShipmentViewSet(viewsets.ModelViewSet):
                     result["attached_waybills"] += 1
 
         return Response(result)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsManagerOrHead],
+    )
+    def detach_waybill(self, request, pk=None):
+        """
+        POST /api/carrier-shipments/{id}/detach_waybill/ — {"waybill_number": "..."}
+        Відкріплює накладну від ТТН. Якщо накладна більше не входить у жодне
+        відправлення служби доставки — знімає з неї канал "carrier", щоб її
+        можна було призначити іншому каналу.
+        """
+        shipment = self.get_object()
+        waybill_number = request.data.get("waybill_number")
+        link = shipment.waybills.filter(waybill_number=waybill_number).first()
+        if not link:
+            return Response(
+                {"error": "Накладна не прив'язана до цього відправлення"},
+                status=404,
+            )
+        with transaction.atomic():
+            link.delete()
+            if not CarrierShipmentWaybill.objects.filter(
+                waybill_number=waybill_number
+            ).exists():
+                WaybillRecord.objects.filter(
+                    waybill_number=waybill_number,
+                    delivery_channel=WaybillRecord.DeliveryChannel.CARRIER,
+                ).update(delivery_channel=None)
+        return Response(CarrierShipmentSerializer(shipment).data)
+
+    @action(detail=False, methods=["get"])
+    def review(self, request):
+        """
+        GET /api/carrier-shipments/review/?carrier=&date_from=&date_to=
+        Звірка відправлень служби доставки (/analytics/carriers): кожна ТТН
+        з вартістю (CarrierCost) і накладними, збагаченими даними з 1С
+        (WaybillRecord) та списком інших ТТН з тією ж накладною. Кілька
+        запитів на весь період замість N+1 на кожне відправлення.
+        """
+        shipments = CarrierShipment.objects.all()
+        carrier = request.query_params.get("carrier")
+        if carrier:
+            shipments = shipments.filter(carrier=carrier)
+        for param, lookup in (("date_from", "gte"), ("date_to", "lte")):
+            value = request.query_params.get(param)
+            if value:
+                try:
+                    parsed = parse_date(value)
+                except ValueError:
+                    parsed = None
+                if not parsed:
+                    return Response({"error": f"Некоректна дата {param}"}, status=400)
+                shipments = shipments.filter(**{f"shipment_date__{lookup}": parsed})
+        shipments = (
+            shipments.annotate(
+                cost_uah=Sum("costs__cost_uah"),
+                cost_weight_kg=Sum("costs__weight_kg"),
+                costs_count=Count("costs"),
+            )
+            .prefetch_related("waybills")
+            .order_by("shipment_date", "ttn")
+        )
+        shipments = list(shipments)
+        numbers = {w.waybill_number for s in shipments for w in s.waybills.all()}
+
+        records = {}
+        rows = (
+            WaybillRecord.objects.filter(waybill_number__in=numbers)
+            .values("waybill_number", "legal_entity")
+            .annotate(
+                total_uah=Sum("total_uah"),
+                waybill_date=Min("waybill_date"),
+                customer_name=Max("customer_name"),
+                delivery_channel=Max("delivery_channel"),
+                car_number=Max("assigned_car__number_car"),
+            )
+        )
+        for row in rows:
+            records.setdefault(row["waybill_number"], []).append(row)
+
+        ttns_by_number = {}
+        links = CarrierShipmentWaybill.objects.filter(
+            waybill_number__in=numbers
+        ).values_list("waybill_number", "shipment_id", "shipment__ttn")
+        for number, shipment_id, ttn in links:
+            ttns_by_number.setdefault(number, []).append((shipment_id, ttn))
+
+        def waybill_data(shipment, link):
+            matches = records.get(link.waybill_number, [])
+            first = matches[0] if matches else {}
+            return {
+                "id": link.id,
+                "waybill_number": link.waybill_number,
+                "found": bool(matches),
+                "legal_entities": [m["legal_entity"] for m in matches],
+                "customer_name": first.get("customer_name"),
+                "waybill_date": first.get("waybill_date"),
+                "total_uah": sum((m["total_uah"] or 0) for m in matches),
+                "delivery_channel": first.get("delivery_channel"),
+                "car_number": first.get("car_number"),
+                "other_ttns": [
+                    ttn
+                    for sid, ttn in ttns_by_number.get(link.waybill_number, [])
+                    if sid != shipment.id
+                ],
+            }
+
+        return Response(
+            [
+                {
+                    "id": s.id,
+                    "carrier": s.carrier,
+                    "ttn": s.ttn,
+                    "shipment_date": s.shipment_date,
+                    "cost_uah": s.cost_uah,
+                    "cost_weight_kg": s.cost_weight_kg,
+                    "costs_count": s.costs_count,
+                    "waybills": [waybill_data(s, w) for w in s.waybills.all()],
+                }
+                for s in shipments
+            ]
+        )
 
 
 class CarrierCostViewSet(viewsets.ModelViewSet):
