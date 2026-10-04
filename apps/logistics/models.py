@@ -1,11 +1,12 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+
 class HiredTransportTrip(models.Model):
     """
-        Single trip by hired (non-fleet) transport (§5.3 01_PROJECT_OVERVIEW.md).
-        Entered by the logist, one row per trip — cost is actual, from the carrier.
-        """
+    Single trip by hired (non-fleet) transport (§5.3 01_PROJECT_OVERVIEW.md).
+    Entered by the logist, one row per trip — cost is actual, from the carrier.
+    """
 
     car_number = models.CharField(
         max_length=20,
@@ -24,7 +25,7 @@ class HiredTransportTrip(models.Model):
         help_text=_("Дата, на яку був виконаний рейс"),
     )
 
-    cost_uah=models.DecimalField(
+    cost_uah = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         verbose_name=_("Вартість доставки (грн)"),
@@ -60,11 +61,12 @@ class HiredTransportTrip(models.Model):
     def __str__(self):
         return f"{self.car_number} - {self.route_name} ({self.trip_date})"
 
+
 class HiredTripWaybill(models.Model):
     """
-        Waybill attached to a hired-transport trip.
-        waybill_number is unique — a waybill can belong to only one channel/trip.
-        """
+    Waybill attached to a hired-transport trip.
+    waybill_number is unique — a waybill can belong to only one channel/trip.
+    """
 
     trip = models.ForeignKey(
         HiredTransportTrip,
@@ -88,6 +90,7 @@ class HiredTripWaybill(models.Model):
 
     def __str__(self):
         return f"{self.trip} - {self.waybill_number}"
+
 
 class CarrierShipment(models.Model):
     """
@@ -134,10 +137,14 @@ class CarrierShipment(models.Model):
     def __str__(self):
         return f"{self.ttn} ({self.get_carrier_display()})"
 
+
 class CarrierShipmentWaybill(models.Model):
     """
-        Waybill included in a carrier shipment. One ТТН can cover several waybills.
-        """
+    Waybill included in a carrier shipment. One ТТН can cover several waybills,
+    and one waybill can appear in several ТТН (посилка + зворотна доставка
+    документів, або товар однієї накладної поїхав двома посилками) — тому
+    унікальна лише пара (shipment, waybill_number).
+    """
 
     shipment = models.ForeignKey(
         CarrierShipment,
@@ -149,18 +156,25 @@ class CarrierShipmentWaybill(models.Model):
 
     waybill_number = models.CharField(
         max_length=50,
-        unique=True,
+        db_index=True,
         verbose_name=_("Номер відправлення"),
         help_text=_("Номер відправлення"),
     )
 
     class Meta:
         db_table = "carrier_shipment_waybills"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shipment", "waybill_number"],
+                name="uniq_carrier_shipment_waybill",
+            ),
+        ]
         verbose_name = _("Накладна відправлення")
         verbose_name_plural = _("Накладні відправлення")
 
     def __str__(self):
         return f"{self.shipment.ttn} ({self.waybill_number})"
+
 
 class CarrierCost(models.Model):
     """
