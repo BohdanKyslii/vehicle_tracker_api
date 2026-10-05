@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django.db import transaction
 from django.db.models import Count, Max, Min, Sum
 from django.utils.dateparse import parse_date
@@ -27,6 +29,13 @@ WRITE_ACTIONS = ["create", "update", "partial_update", "destroy"]
 # Ліміт на один запит bulk_import — фронт шле реєстр пачками
 BULK_IMPORT_MAX = 500
 CHANNEL_CONFLICT_ERROR = "Накладна вже призначена іншому каналу доставки"
+
+
+def link_orphan_costs(shipment):
+    """Прив'язує до відправлення витрати з його ТТН, що прийшли раніше за нього."""
+    CarrierCost.objects.filter(ttn=shipment.ttn, shipment__isnull=True).update(
+        shipment=shipment
+    )
 
 
 class HiredTransportTripViewSet(viewsets.ModelViewSet):
@@ -112,12 +121,13 @@ class CarrierShipmentViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsManagerOrHead()]
         return [IsAuthenticated()]
 
+    def perform_create(self, serializer):
+        """Вартість могла прийти раніше за відправлення — підхоплюємо її по ТТН."""
+        link_orphan_costs(serializer.save())
+
     def perform_update(self, serializer):
         """Змінили ТТН — підхоплюємо вартість, що прийшла раніше під новим номером."""
-        shipment = serializer.save()
-        CarrierCost.objects.filter(ttn=shipment.ttn, shipment__isnull=True).update(
-            shipment=shipment
-        )
+        link_orphan_costs(serializer.save())
 
     def perform_destroy(self, instance):
         """
@@ -243,6 +253,8 @@ class CarrierShipmentViewSet(viewsets.ModelViewSet):
                     ttn=ttn,
                     defaults={"carrier": carrier, "shipment_date": shipment_date},
                 )
+                if created:
+                    link_orphan_costs(shipment)
                 result["created_shipments" if created else "existing_shipments"] += 1
 
                 attached = set(shipment.waybills.values_list("waybill_number", flat=True))
@@ -417,3 +429,73 @@ class CarrierCostViewSet(viewsets.ModelViewSet):
         ttn = serializer.validated_data.get("ttn")
         shipment = CarrierShipment.objects.filter(ttn=ttn).first()
         serializer.save(shipment=shipment)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsManagerOrHead],
+    )
+    def bulk_import(self, request):
+        """
+        POST /api/carrier-costs/bulk_import/ — вартість з реєстру служби доставки:
+        {"costs": [{"ttn": "...", "cost_date": "YYYY-MM-DD",
+                    "cost_uah": "110.50", "weight_kg": "0.50"}, ...]}
+
+        Ідемпотентний: ТТН, для якої вартість уже є, пропускається — той
+        самий звіт можна залити повторно (на відміну від create, який
+        завжди додає). Відправлення з такою ТТН лінкується одразу; якщо
+        його ще нема — підхопиться при створенні (link_orphan_costs).
+        """
+        items = request.data.get("costs")
+        if not isinstance(items, list) or not items:
+            return Response({"error": "costs має бути непорожнім списком"}, status=400)
+        if len(items) > BULK_IMPORT_MAX:
+            return Response(
+                {"error": f"Не більше {BULK_IMPORT_MAX} рядків за один запит"},
+                status=400,
+            )
+
+        ttns = {str(i.get("ttn") or "").strip() for i in items}
+        existing = set(
+            CarrierCost.objects.filter(ttn__in=ttns).values_list("ttn", flat=True)
+        )
+        shipments = dict(
+            CarrierShipment.objects.filter(ttn__in=ttns).values_list("ttn", "id")
+        )
+        result = {"created": 0, "linked": 0, "skipped_existing": 0, "errors": []}
+        new_costs = []
+        for item in items:
+            ttn = str(item.get("ttn") or "").strip()
+            if ttn in existing:
+                result["skipped_existing"] += 1
+                continue
+            try:
+                cost_date = parse_date(str(item.get("cost_date") or ""))
+                cost_uah = Decimal(str(item.get("cost_uah")))
+                weight_kg = Decimal(str(item.get("weight_kg")))
+            except (ValueError, InvalidOperation):
+                cost_date = None
+            if (
+                not ttn
+                or not cost_date
+                or not cost_uah.is_finite()
+                or not weight_kg.is_finite()
+            ):
+                result["errors"].append(
+                    {"ttn": ttn, "message": "Некоректні ТТН, дата, вартість чи вага"}
+                )
+                continue
+            existing.add(ttn)  # дубль ТТН у самому файлі — беремо перший рядок
+            new_costs.append(
+                CarrierCost(
+                    ttn=ttn,
+                    cost_date=cost_date,
+                    cost_uah=cost_uah,
+                    weight_kg=weight_kg,
+                    shipment_id=shipments.get(ttn),
+                )
+            )
+        CarrierCost.objects.bulk_create(new_costs)
+        result["created"] = len(new_costs)
+        result["linked"] = sum(1 for c in new_costs if c.shipment_id)
+        return Response(result)
