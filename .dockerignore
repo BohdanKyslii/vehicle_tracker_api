@@ -1,0 +1,16 @@
+.git
+.github
+.idea
+.claude
+.ruff_cache
+venv
+.venv
+__pycache__
+*.pyc
+.env
+.env.*
+task_description
+deploy
+staticfiles
+media
+*.md

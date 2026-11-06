@@ -1,20 +1,33 @@
+# Прод на хості rubin. Образ збирає GitHub Actions і завантажує на хост,
+# на самому хості не збирати: там мало пам'яті. Назовні порти не відкриті:
+# запити приходять через vehicle-ui, БД доступна за іменем контейнера.
+# Покроково: deploy/DEPLOY_RUBIN_HOST.md
 services:
   api:
+    image: vehicle-api:latest
     build: .
+    container_name: vehicle-api
     restart: unless-stopped
     env_file: .env
-    ports:
-      - "8000:8000"
-    network_mode: host  # доступ до PostgreSQL на Pi напряму
+    mem_limit: 384m
+    networks:
+      - shared_net
     command: >
       sh -c "python manage.py migrate &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000"
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120"
 
   bot:
-    build: .
+    image: vehicle-api:latest
+    container_name: vehicle-bot
     restart: unless-stopped
     env_file: .env
-    network_mode: host  # той самий доступ до Postgres; вихідні long-polling з'єднання, вхідний порт не потрібен
+    mem_limit: 192m
+    networks:
+      - shared_net
     depends_on:
       - api
     command: python manage.py run_bot
+
+networks:
+  shared_net:
+    external: true

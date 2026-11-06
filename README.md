@@ -1,8 +1,9 @@
 # Vehicle Cost Tracker — Backend
 
 Django REST API для обліку транспортних витрат (автопарк, водії,
-накладні, найманий транспорт, аналітика). Розгорнутий у проді на
-Raspberry Pi за адресою [warehouse.mom](https://warehouse.mom).
+накладні, найманий транспорт, аналітика). Прод на Raspberry Pi
+(warehouse.mom) втрачено; перенесення на хост rubin описане в
+[`deploy/DEPLOY_RUBIN_HOST.md`](deploy/DEPLOY_RUBIN_HOST.md).
 
 Фронтенд (React PWA) — окремий репозиторій `vehicle_cost_tracker`,
 типи синхронізуються вручну між `src/types/index.ts` і моделями цього
@@ -13,10 +14,10 @@ Raspberry Pi за адресою [warehouse.mom](https://warehouse.mom).
 - Django 6 + Django REST Framework, сесійна авторизація (не JWT)
 - PostgreSQL
 - Telegram-бот на `aiogram` (реєстрація водіїв, `apps/accounts/bot.py`)
-- Docker Compose (сервіси `api` + `bot`, `network_mode: host` — прямий
-  доступ до Postgres на тому ж хості)
-- Деплой — GitHub Actions → SSH через `cloudflared` → Pi →
-  `git pull` + `docker compose up -d` (`.github/workflows/deploy.yml`)
+- Docker Compose (сервіси `api` + `bot`, мережа `shared_net`, Postgres у
+  контейнері `rubin-postgres-container`)
+- Деплой — GitHub Actions збирає образ і завантажує на хост через SSH
+  (`.github/workflows/deploy.yml`); вмикається змінною `DEPLOY_ENABLED`
 
 ## З чого почати
 
@@ -40,15 +41,13 @@ python manage.py runserver
 
 Бот окремим процесом: `python manage.py run_bot`.
 
-> ⚠️ Локальний `.env` за замовчуванням у цій команді вже налаштований
-> на прод-БД на Pi (`DB_HOST=192.168.0.114`) — команди `manage.py`
-> впливають на реальні дані, не на пісочницю. Деталі — `STATE.md`.
+> Локальна БД `vehicle_tracker` зараз є єдиною копією даних проду.
+> Не виконувати на ній руйнівних команд, поки дані не перенесено на хост.
 
 ## Продакшн
 
-```bash
-docker compose up -d --build
-```
+Покрокова інструкція: [`deploy/DEPLOY_RUBIN_HOST.md`](deploy/DEPLOY_RUBIN_HOST.md).
+Шаблон змінних: `env.production.example`.
 
-Обидва контейнери (`api`, `bot`) читають `.env` з кореня репозиторію на
-Pi (`~/vehicle_tracker_api/.env`), у git цей файл не потрапляє.
+Обидва контейнери (`api`, `bot`) читають `.env` з
+`/opt/vehicle_tracker_api/.env`, у git цей файл не потрапляє.

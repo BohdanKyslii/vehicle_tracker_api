@@ -3,50 +3,54 @@ name: Deploy API
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy-api
 
 jobs:
   deploy:
+    # Поки змінна репозиторію DEPLOY_ENABLED не дорівнює 'true', деплой
+    # пропускається: merge у main нічого не викочує на хост.
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install cloudflared
-        run: |
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-            -o cloudflared
-          chmod +x cloudflared
-          sudo mv cloudflared /usr/local/bin/
+      - uses: actions/checkout@v4
 
       - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.PI_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          # Захардкодили username і hostname напряму
-          cat > ~/.ssh/config << 'EOF'
-          Host pi-deploy
-            HostName ssh.warehouse.mom
-            User rasberry_kisliy
-            IdentityFile ~/.ssh/deploy_key
-            ProxyCommand cloudflared access ssh --hostname ssh.warehouse.mom
-            StrictHostKeyChecking no
-            PasswordAuthentication no
-          EOF
-          chmod 600 ~/.ssh/config
-          echo "=== Config ==="
-          cat ~/.ssh/config
-          echo "=== Key fingerprint ==="
-          ssh-keygen -l -f ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          {
+            echo "Host deploy-host"
+            echo "  HostName $DEPLOY_HOST"
+            echo "  User $DEPLOY_USER"
+            echo "  IdentityFile ~/.ssh/deploy_key"
+            echo "  StrictHostKeyChecking yes"
+            echo "  PasswordAuthentication no"
+          } > ~/.ssh/config
 
-      - name: Deploy via SSH
+      # Образ збирається тут, а не на хості: там мало вільної пам'яті.
+      - name: Build image
+        run: docker build -t vehicle-api:latest .
+
+      - name: Upload image to host
+        run: docker save vehicle-api:latest | gzip | ssh deploy-host 'gunzip | docker load'
+
+      - name: Restart containers
         run: |
-          ssh pi-deploy '
+          ssh deploy-host "
             set -e
-            cd ~/vehicle_tracker_api
-            echo "==> Pulling latest code..."
-            git pull origin main
-            echo "==> Rebuilding containers..."
-            docker compose build
-            docker compose up -d
+            cd /opt/vehicle_tracker_api
+            git fetch origin main
+            git reset --hard ${GITHUB_SHA}
+            docker compose up -d --no-build --remove-orphans
             docker image prune -f
-            echo "==> Deploy complete!"
-          '
+          "
