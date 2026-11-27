@@ -334,6 +334,10 @@ Backend (`vehicle_tracker_api`, Django/DRF) розгорнутий на хост
   Cloudflare і запис `ssh.warehouse.mom`, секрет `PI_SSH_KEY`.
 - Дозалити дані після 2026-09-28: накладні 1С після 08.09.2026,
   відправлення перевізників після 30.09.2026, витрати НП.
+- Відкладено (коли буде час): скринька `@warehouse.mom` на cPanel — окрема
+  зміна DNS (MX і `mail` зараз ведуть на хост rubin, де пошти немає).
+  Деталі — `vehicle_cost_tracker/obsidian/tasks.md`. Листи застосунку від
+  цього не залежать.
 - Прибрати локальне сміття, яке лишилось untracked (не в git, але
   заважає): `apps/cars/migrations/0006_*.py` (самоописаний no-op,
   "варто видалити вручну"), `apps/customers/migrations/0002_*.py` і
