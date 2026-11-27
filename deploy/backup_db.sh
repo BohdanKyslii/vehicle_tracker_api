@@ -3,6 +3,7 @@
 # Копія на тому самому хості не захищає від його втрати, тому дамп потрібно
 # ще й забирати поза хост (крок 9 у deploy/DEPLOY_RUBIN_HOST.md).
 set -eu
+umask 077  # дамп містить хеші паролів і дані клієнтів
 
 BACKUP_DIR="${BACKUP_DIR:-/opt/vehicle_tracker_backups}"
 KEEP="${KEEP:-14}"
