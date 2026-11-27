@@ -1,8 +1,14 @@
 # Vehicle Cost Tracker — Backend
 
 Django REST API для обліку транспортних витрат (автопарк, водії,
-накладні, найманий транспорт, аналітика). Розгорнутий у проді на
-Raspberry Pi за адресою [warehouse.mom](https://warehouse.mom).
+накладні, найманий транспорт, служби доставки, аналітика).
+
+> ⚠️ **Стан на 2026-11-27: прод не працює.** Raspberry Pi
+> (`warehouse.mom`) зламався, дані проду втрачено. Перенесення на хост
+> rubin підготовлено в гілці `feat/deploy-rubin-host` (інструкція —
+> `deploy/DEPLOY_RUBIN_HOST.md` у тій гілці), ще не виконано.
+> Конфігурація деплою в `main` (`docker-compose.yml`,
+> `.github/workflows/deploy.yml`) досі описує старий Pi.
 
 Фронтенд (React PWA) — окремий репозиторій `vehicle_cost_tracker`,
 типи синхронізуються вручну між `src/types/index.ts` і моделями цього
@@ -13,10 +19,7 @@ Raspberry Pi за адресою [warehouse.mom](https://warehouse.mom).
 - Django 6 + Django REST Framework, сесійна авторизація (не JWT)
 - PostgreSQL
 - Telegram-бот на `aiogram` (реєстрація водіїв, `apps/accounts/bot.py`)
-- Docker Compose (сервіси `api` + `bot`, `network_mode: host` — прямий
-  доступ до Postgres на тому ж хості)
-- Деплой — GitHub Actions → SSH через `cloudflared` → Pi →
-  `git pull` + `docker compose up -d` (`.github/workflows/deploy.yml`)
+- Docker Compose (сервіси `api` + `bot`)
 
 ## З чого почати
 
@@ -24,31 +27,30 @@ Raspberry Pi за адресою [warehouse.mom](https://warehouse.mom).
   [`task_description/README.md`](task_description/README.md) (бізнес-логіка,
   архітектура, `STATE.md` з живою історією сесій).
 - **Покрокове відтворення бекенду з нуля** —
-  [`DJANGO_CODING_GUIDE.md`](DJANGO_CODING_GUIDE.md) (Фази 1-12, зі
+  [`DJANGO_CODING_GUIDE.md`](DJANGO_CODING_GUIDE.md) (Фази 1-13, зі
   змістом на початку файлу).
-- **Telegram-бот** — [`TELEGRAM_BOT_SETUP.md`](TELEGRAM_BOT_SETUP.md)
-  (локальний файл, не в git — токенів не містить, але це internal
-  ops-нотатка; попроси в команди, якщо файлу немає локально).
+- **Telegram-бот** — `TELEGRAM_BOT_SETUP.md` (локальний файл, не в git).
 
 ## Локальний запуск
 
 ```bash
 cp env.example .env        # заповнити DB_*, TELEGRAM_BOT_TOKEN тощо
 python manage.py migrate
-python manage.py runserver
+python manage.py runserver 8001
 ```
 
-Бот окремим процесом: `python manage.py run_bot`.
+Порт **8001**, не 8000: на машині розробника 8000 зайнятий іншим
+проєктом (див. `task_description/AGENTS_GLOBAL.md`). Бот окремим
+процесом: `python manage.py run_bot`.
 
-> ⚠️ Локальний `.env` за замовчуванням у цій команді вже налаштований
-> на прод-БД на Pi (`DB_HOST=192.168.0.114`) — команди `manage.py`
-> впливають на реальні дані, не на пісочницю. Деталі — `STATE.md`.
+> ⚠️ Локальна БД `vehicle_tracker` зараз є **єдиною копією даних
+> проду** (знімок 2026-09-28 + локальні імпорти жовтня). Не виконувати
+> на ній руйнівних команд, поки дані не перенесено на новий хост.
 
-## Продакшн
+## Що не потрапляє в git / образ
 
-```bash
-docker compose up -d --build
-```
-
-Обидва контейнери (`api`, `bot`) читають `.env` з кореня репозиторію на
-Pi (`~/vehicle_tracker_api/.env`), у git цей файл не потрапляє.
+- `.gitignore` — `.env`, дампи БД (`dump-*.sql`, `*.dump`), зразки
+  файлів з 1С (`task_description/**/*.xls*`, `*.pdf`, `*.csv`),
+  кеші й IDE-файли.
+- `.dockerignore` — документація (`*.md`, `task_description/`),
+  `.git`, `venv`, кеші: в образ іде лише код застосунку.

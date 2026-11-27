@@ -1,10 +1,16 @@
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # Django
 *.log
@@ -15,10 +21,18 @@ staticfiles/
 
 # Environment
 .env
+.env.production
 
-# IDE
+# IDE / локальні налаштування агентів
 .idea/
+.vscode/
 *.swp
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
 
 # AI Agent Contexts
 junie_context/
@@ -28,5 +42,24 @@ task_description/file_1C/
 # Ops-нотатки, не для прод-репо
 TELEGRAM_BOT_SETUP.md
 
-# Environment (продовження)
-.env.production
+# Дампи й бекапи БД — реальні дані, репозиторій публічний.
+# (Явні шаблони, а не *.sql: SQL-скрипти розгортання мають трекатись.)
+*.dump
+*.backup
+*.bak
+dump-*.sql
+backup-*.sql
+task_description/**/*.sql
+
+# Зразки документів з 1С / бізнес-файли (реальні дані, на проді не потрібні)
+task_description/**/*.xls
+task_description/**/*.xlsx
+task_description/**/*.csv
+task_description/**/*.pdf
+
+# Чернетки, що не стосуються поточної архітектури
+# (JWT-гайд липня 2026 — проєкт використовує сесію Django, не JWT)
+task_description/transport/AUTH_GUIDE.md
+
+# Випадково збережений вивід команди (git diff) замість запуску
+python.exe manage.py check
