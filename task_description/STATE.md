@@ -2,21 +2,21 @@
 
 > Оновлюється після кожної значущої сесії. Детальна історія — `CHANGES.md`.
 
-**Останнє оновлення:** 2026-11-27
+**Останнє оновлення:** 2026-11-27 (перенос на rubin)
 
-> **Спершу прочитай це.** Raspberry Pi зламався, прод `warehouse.mom`
-> не працює, дані проду втрачено. Локальна БД `vehicle_tracker` є єдиною копією:
-> не виконувати на ній руйнівних команд. Перенесення на хост rubin підготовлено у
-> гілці `feat/deploy-rubin-host`, ще не виконано; інструкція
-> `deploy/DEPLOY_RUBIN_HOST.md`. Згадки про Pi нижче описують старий стан.
+> **Спершу прочитай це.** З 2026-11-27 прод `warehouse.mom` працює на хості
+> rubin (Docker: `vehicle-api`, `vehicle-bot`, `vehicle-ui` у мережі `shared_net`,
+> БД `vehicle_tracker` у `rubin-postgres-container`, nginx — у репозиторії
+> `rubin_wine`). Деплой — push у `main` → GitHub Actions. Інструкція й відкат —
+> `deploy/DEPLOY_RUBIN_HOST.md`. Згадки про Raspberry Pi нижче описують старий стан.
 
 ---
 
 ## Поточна фаза
 
-Backend (`vehicle_tracker_api`, Django/DRF) був розгорнутий на Raspberry Pi (до поломки, див. вище)
-(Docker Compose, сервіси `api` + `bot`, `network_mode: host`, напряму
-до Postgres на тому ж хості). Фронтенд — окремий репозиторій
+Backend (`vehicle_tracker_api`, Django/DRF) розгорнутий на хості rubin
+(Docker Compose, сервіси `api` + `bot`, мережа `shared_net`, Postgres у
+`rubin-postgres-container`; до 10.2026 — Raspberry Pi). Фронтенд — окремий репозиторій
 `vehicle_cost_tracker` (React PWA), синхронізація типів вручну
 (`src/types/index.ts` ↔ Django-моделі).
 
@@ -314,14 +314,26 @@ Backend (`vehicle_tracker_api`, Django/DRF) був розгорнутий на R
   `feat/deploy-rubin-host`) — документація й `task_description/` не
   потрапляють в образ.
 
+- **2026-11-27: прод перенесено на хост rubin.** Гілку
+  `feat/deploy-rubin-host` злито в `main` обох репо. БД відновлено зі
+  свіжого дампу локальної БД (30 таблиць, кількості рядків збіглися,
+  sequences в порядку). Новий токен бота, SMTP-пошта, сертифікат Let's
+  Encrypt (`warehouse.mom` + `www`, до 2027-02-25, продовжує
+  `renew-ssl.sh` хоста). Nginx — MR !274 у `rubin_wine`. Ліміт пам'яті
+  бота піднято до 256m (займав 169 з 192 МБ). Бекап: cron на хості щодня
+  02:15 (`deploy/backup_db.sh`, 14 копій у `/opt/vehicle_tracker_backups`,
+  тестове відновлення пройшло) + завдання Windows `VehicleTrackerBackup`
+  о 09:30 забирає `latest.dump` на ПК розробника. Дані: знімок проду
+  2026-09-28 + імпорт перевізників 2026-10-04 — новіше треба дозалити.
+
 ## Наступні кроки
 
-- 🔴 **Перенести прод на rubin** за `deploy/DEPLOY_RUBIN_HOST.md`
-  (гілка `feat/deploy-rubin-host`). До того — жодних руйнівних команд
-  на локальній БД, і бажано не міняти схему. Після переносу злити гілку
-  в `main` обох репо; при злитті в бекенді чекати конфліктів у
-  `README.md`/`task_description/STATE.md` (оновлювались паралельно в
-  `main` 2026-11-27) — брати актуальніший зміст обох.
+- 🔴 **Завершити перенос** (кроки 6, 10, 11 `deploy/DEPLOY_RUBIN_HOST.md`):
+  змінити паролі всіх акаунтів; перевірити вхід, Mini App з реальним
+  водієм (URL у `@BotFather`), імпорт файлу; прибрати старий тунель
+  Cloudflare і запис `ssh.warehouse.mom`, секрет `PI_SSH_KEY`.
+- Дозалити дані після 2026-09-28: накладні 1С після 08.09.2026,
+  відправлення перевізників після 30.09.2026, витрати НП.
 - Прибрати локальне сміття, яке лишилось untracked (не в git, але
   заважає): `apps/cars/migrations/0006_*.py` (самоописаний no-op,
   "варто видалити вручну"), `apps/customers/migrations/0002_*.py` і
@@ -330,12 +342,6 @@ Backend (`vehicle_tracker_api`, Django/DRF) був розгорнутий на R
   `python.exe manage.py check` у корені (збережений вивід `git diff`).
   Перед видаленням міграцій перевірити, чи не записані вони в
   `django_migrations` локальної БД.
-- Після переносу: пройтись `setval(seq, MAX(id))` по всіх таблицях
-  (розсинхрон sequence ловили в `drivers`/`cars` 2026-08-16, решта
-  таблиць не перевірялась; при відновленні з дампу ризик той самий).
-- Після переносу: наскрізно перевірити Telegram-бот і `/driver-app`
-  з реальним водієм на новому домені (URL Mini App у `@BotFather`
-  зміниться, якщо зміниться домен).
 - Аналітика по найманому транспорту / компаніях / категоріях /
   товарах / клієнтах і матчинг повернень — фронтенд має заглушки
   (`ROADMAP.md`).
@@ -349,5 +355,5 @@ Backend (`vehicle_tracker_api`, Django/DRF) був розгорнутий на R
 
 ## Відомі блокери
 
-- **Немає проду** — Pi зламався, перенесення на rubin не виконано
-  (див. вище).
+- Немає. Обережно з деплоєм `rubin_wine`: він робить `docker compose down`
+  і на кілька хвилин зупиняє Postgres, тобто й API vehicle tracker.

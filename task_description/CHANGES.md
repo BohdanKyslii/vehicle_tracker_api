@@ -2,6 +2,17 @@
 
 ---
 
+## 2026-11-27 — Прод перенесено на хост rubin
+
+- Злито `feat/deploy-rubin-host` у `main` (обидва репо).
+- БД `vehicle_tracker` + користувач `vehicle_app` у `rubin-postgres-container`,
+  відновлено зі свіжого дампу локальної БД; GitHub Actions деплоїть
+  `vehicle-api`/`vehicle-bot`/`vehicle-ui` (окремі deploy-ключі для кожного репо).
+- `docker-compose.yml`: `vehicle-bot` `mem_limit` 192m → 256m.
+- `deploy/backup_db.sh`: `umask 077`; cron 02:15 на хості + копія на ПК (09:30).
+- DNS `warehouse.mom`/`www` → A на хост (DNS only), сертифікат Let's Encrypt,
+  nginx — MR !274 у `rubin_wine`.
+
 ## 2026-11-27 — Документація під стан після поломки Pi + .gitignore/.dockerignore
 
 ### Що зроблено
