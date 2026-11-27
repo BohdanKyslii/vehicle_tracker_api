@@ -3,12 +3,9 @@
 Django REST API для обліку транспортних витрат (автопарк, водії,
 накладні, найманий транспорт, служби доставки, аналітика).
 
-> ⚠️ **Стан на 2026-11-27: прод не працює.** Raspberry Pi
-> (`warehouse.mom`) зламався, дані проду втрачено. Перенесення на хост
-> rubin підготовлено в гілці `feat/deploy-rubin-host` (інструкція —
-> `deploy/DEPLOY_RUBIN_HOST.md` у тій гілці), ще не виконано.
-> Конфігурація деплою в `main` (`docker-compose.yml`,
-> `.github/workflows/deploy.yml`) досі описує старий Pi.
+> ⚠️ **Стан на 2026-11-27:** Raspberry Pi (`warehouse.mom`) зламався,
+> дані проду втрачено. Прод переноситься на хост rubin за
+> [`deploy/DEPLOY_RUBIN_HOST.md`](deploy/DEPLOY_RUBIN_HOST.md).
 
 Фронтенд (React PWA) — окремий репозиторій `vehicle_cost_tracker`,
 типи синхронізуються вручну між `src/types/index.ts` і моделями цього
@@ -19,7 +16,10 @@ Django REST API для обліку транспортних витрат (ав�
 - Django 6 + Django REST Framework, сесійна авторизація (не JWT)
 - PostgreSQL
 - Telegram-бот на `aiogram` (реєстрація водіїв, `apps/accounts/bot.py`)
-- Docker Compose (сервіси `api` + `bot`)
+- Docker Compose (сервіси `api` + `bot`, мережа `shared_net`, Postgres у
+  контейнері `rubin-postgres-container`)
+- Деплой — GitHub Actions збирає образ і завантажує на хост через SSH
+  (`.github/workflows/deploy.yml`); вмикається змінною `DEPLOY_ENABLED`
 
 ## З чого почати
 
@@ -54,3 +54,11 @@ python manage.py runserver 8001
   кеші й IDE-файли.
 - `.dockerignore` — документація (`*.md`, `task_description/`),
   `.git`, `venv`, кеші: в образ іде лише код застосунку.
+
+## Прод (хост rubin)
+
+Покрокова інструкція: [`deploy/DEPLOY_RUBIN_HOST.md`](deploy/DEPLOY_RUBIN_HOST.md).
+Шаблон змінних: `env.production.example`.
+
+Обидва контейнери (`api`, `bot`) читають `.env` з
+`/opt/vehicle_tracker_api/.env`, у git цей файл не потрапляє.
